@@ -3,6 +3,7 @@ import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
 import { leads } from "../db/schema/leads.js";
 import { messageLog } from "../db/schema/messageLog.js";
+import { escalations } from "../db/schema/escalations.js";
 import type { ClassificationResult, EnquiryCategory } from "../rules/classifier.js";
 
 // Converts a Meta message timestamp (unix seconds, as a string) to a Date.
@@ -193,6 +194,47 @@ export async function persistOutboundMessage(input: OutboundMessagePersistenceIn
   } catch (error) {
     logger.error("webhook_outbound_message_persistence_failed", {
       messageId: input.messageId,
+      leadId: input.leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+export interface EscalationPersistenceInput {
+  leadId: string;
+  lastUserMessage: string;
+  classification: string;
+  escalationReason: string;
+  requiredAction: string;
+}
+
+// Creates one escalation row per Section 12 human handoff. The current
+// escalations schema (src/db/schema/escalations.ts) has no
+// whatsapp_phone/display_name/message_id columns — phone number and
+// display name stay reachable via the required lead_id foreign key rather
+// than being duplicated here, and status defaults to "open" at the schema
+// level. Duplicate prevention relies on the existing message-level dedupe
+// gate in src/routes/webhook.ts: this is only ever called once per
+// "not_duplicate" WhatsApp message, so no separate duplicate check is
+// needed here.
+export async function createEscalation(input: EscalationPersistenceInput): Promise<boolean> {
+  try {
+    await db.insert(escalations).values({
+      leadId: input.leadId,
+      lastUserMessage: input.lastUserMessage,
+      classification: input.classification,
+      escalationReason: input.escalationReason,
+      requiredAction: input.requiredAction,
+    });
+    logger.info("webhook_escalation_created", {
+      leadId: input.leadId,
+      escalationReason: input.escalationReason,
+      requiredAction: input.requiredAction,
+    });
+    return true;
+  } catch (error) {
+    logger.error("webhook_escalation_creation_failed", {
       leadId: input.leadId,
       error: error instanceof Error ? error.message : String(error),
     });

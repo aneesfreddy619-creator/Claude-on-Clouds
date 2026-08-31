@@ -5,6 +5,7 @@ import { logger } from "../lib/logger.js";
 import { verifyWebhookSignature } from "../security/webhookSignature.js";
 import { checkDedupeStatus, type DedupeResult } from "../services/dedupe.js";
 import {
+  createEscalation,
   findOrCreateAndUpdateLead,
   parseMessageTimestamp,
   persistInboundMessage,
@@ -163,10 +164,27 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         receivedAt: inboundAt,
       });
 
+      // Escalation record: one row per human_escalation classification
+      // (Section 12 human handoff), created BEFORE reply sending so the
+      // handoff record exists even if outbound sending fails or is
+      // skipped (e.g. opted_out) below. Only reached here because this
+      // message already passed the "not_duplicate" dedupe gate above, so
+      // a redelivered WhatsApp message can never create a second row (see
+      // createEscalation's comment in src/services/persistence.ts).
+      if (classification.category === "human_escalation" && classification.escalationReason) {
+        await createEscalation({
+          leadId: lead.leadId,
+          lastUserMessage: message.text,
+          classification: classification.category,
+          escalationReason: classification.escalationReason,
+          requiredAction: approvedReply.requiredAction,
+        });
+      }
+
       // Outbound reply sending: only reached after signature verification,
-      // dedupe, classification, approved-reply selection, and lead/inbound
-      // message persistence have all already happened above — matches the
-      // existing pipeline order exactly, with sending appended at the end.
+      // dedupe, classification, approved-reply selection, lead/inbound
+      // message persistence, and (for human_escalation) escalation-row
+      // creation have all already happened above.
       if (lead.optedOut) {
         logger.info("webhook_reply_skipped", { messageId: message.id, leadId: lead.leadId, reason: "opted_out" });
         continue;
@@ -189,13 +207,6 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         await updateLeadLastOutboundAt(lead.leadId, sentAt);
       }
     }
-
-    // TODO (escalation flow): for classification.category ===
-    // "human_escalation" (Section 6/7), create an escalations row
-    // (src/db/schema/escalations.ts) using classification.escalationReason
-    // and the approved reply's requiredAction, and stop automated
-    // conversational handling, per Section 12. Same "not_duplicate" gate
-    // applies before creating an escalation.
 
     // TODO (admin inspection wiring): src/routes/admin.ts is still a
     // placeholder — once leads/message_log have real rows (as of this
