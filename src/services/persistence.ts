@@ -115,6 +115,54 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
   }
 }
 
+export interface OptOutInput {
+  whatsappPhone: string;
+  displayName?: string;
+  inboundAt: Date;
+}
+
+// Records a STOP opt-out per v0-operational-clarifications.md Section 2:
+// finds or creates the lead, sets opted_out = true, and updates
+// last_inbound_at/updated_at. Deliberately does NOT touch lead_status,
+// primary_category, or escalation_reason — a STOP message is never
+// classified, so there is nothing to record for those fields. Only a
+// human staff action may clear opted_out; nothing in this codebase does.
+export async function recordOptOut(input: OptOutInput): Promise<string | null> {
+  try {
+    const existing = await db.select({ leadId: leads.leadId }).from(leads).where(eq(leads.whatsappPhone, input.whatsappPhone)).limit(1);
+
+    if (existing.length === 0) {
+      const inserted = await db
+        .insert(leads)
+        .values({
+          whatsappPhone: input.whatsappPhone,
+          displayName: input.displayName ?? null,
+          optedOut: true,
+          lastInboundAt: input.inboundAt,
+        })
+        .returning({ leadId: leads.leadId });
+
+      logger.info("webhook_lead_opted_out", { leadId: inserted[0].leadId, created: true });
+      return inserted[0].leadId;
+    }
+
+    const leadId = existing[0].leadId;
+    await db
+      .update(leads)
+      .set({ optedOut: true, lastInboundAt: input.inboundAt, updatedAt: new Date() })
+      .where(eq(leads.leadId, leadId));
+
+    logger.info("webhook_lead_opted_out", { leadId, created: false });
+    return leadId;
+  } catch (error) {
+    logger.error("webhook_opt_out_persistence_failed", {
+      whatsappPhone: input.whatsappPhone,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 // Sets last_outbound_at after a successful send. Called only on send
 // success — a failed send should not claim an outbound message went out.
 export async function updateLeadLastOutboundAt(leadId: string, sentAt: Date): Promise<void> {
@@ -132,7 +180,9 @@ export interface MessagePersistenceInput {
   messageId: string;
   leadId: string;
   text: string;
-  classification: ClassificationResult;
+  // string for a normally classified message; null for a STOP message,
+  // which is never classified (v0-operational-clarifications.md Section 2).
+  classification: string | null;
   receivedAt: Date;
 }
 
@@ -148,7 +198,7 @@ export async function persistInboundMessage(input: MessagePersistenceInput): Pro
       direction: "inbound",
       text: input.text,
       receivedOrSentAt: input.receivedAt,
-      classification: input.classification.category,
+      classification: input.classification,
       automated: true,
       status: "received",
     });

@@ -10,12 +10,14 @@ import {
   parseMessageTimestamp,
   persistInboundMessage,
   persistOutboundMessage,
+  recordOptOut,
   updateLeadLastOutboundAt,
 } from "../services/persistence.js";
 import { sendWhatsAppTextReply } from "../services/whatsappSender.js";
 import { extractInboundSummary, type ExtractedInboundSummary, type WhatsAppWebhookPayload } from "../whatsapp/inboundPayload.js";
 import { classifyMessage } from "../rules/classifier.js";
 import { selectApprovedReply } from "../rules/approvedReplies.js";
+import { isStopMessage } from "../rules/stopDetection.js";
 
 interface WebhookVerifyQuery {
   "hub.mode"?: string;
@@ -119,6 +121,41 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         continue;
       }
 
+      // STOP opt-out (v0-operational-clarifications.md Section 2): checked
+      // before classification, since a STOP message must never be
+      // classified, never get an approved reply selected, never be sent a
+      // reply, and never create an escalation. Handled entirely in its own
+      // branch and then this message is done.
+      if (isStopMessage(message.text)) {
+        if (!message.from) {
+          logger.warn("webhook_stop_skipped", { messageId: message.id, reason: "missing_sender_phone" });
+          continue;
+        }
+
+        const stopInboundAt = parseMessageTimestamp(message.timestamp);
+        const optOutLeadId = await recordOptOut({
+          whatsappPhone: message.from,
+          displayName: message.displayName,
+          inboundAt: stopInboundAt,
+        });
+
+        if (!optOutLeadId) {
+          logger.warn("webhook_stop_message_persistence_skipped", { messageId: message.id, reason: "opt_out_persistence_failed" });
+          continue;
+        }
+
+        await persistInboundMessage({
+          messageId: message.id,
+          leadId: optOutLeadId,
+          text: message.text,
+          classification: null,
+          receivedAt: stopInboundAt,
+        });
+
+        logger.info("webhook_stop_processed", { messageId: message.id, leadId: optOutLeadId });
+        continue;
+      }
+
       const classification = classifyMessage(message.text);
       const approvedReply = selectApprovedReply(classification);
 
@@ -160,7 +197,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         messageId: message.id,
         leadId: lead.leadId,
         text: message.text,
-        classification,
+        classification: classification.category,
         receivedAt: inboundAt,
       });
 
