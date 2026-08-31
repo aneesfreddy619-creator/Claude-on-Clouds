@@ -7,11 +7,11 @@ export const escalations = pgTable("escalations", {
   leadId: uuid("lead_id")
     .notNull()
     .references(() => leads.leadId),
-  whatsappPhone: text("whatsapp_phone").notNull(),
-  displayName: text("display_name"),
   lastUserMessage: text("last_user_message").notNull(),
   classification: text("classification"),
   escalationReason: text("escalation_reason").notNull(),
   requiredAction: text("required_action").notNull(),
+  status: text("status").notNull().default("open"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

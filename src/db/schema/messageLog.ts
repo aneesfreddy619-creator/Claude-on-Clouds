@@ -14,4 +14,5 @@ export const messageLog = pgTable("message_log", {
   confidence: doublePrecision("confidence"),
   automated: boolean("automated").notNull().default(true),
   status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
