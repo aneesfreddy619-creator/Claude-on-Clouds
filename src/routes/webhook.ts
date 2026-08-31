@@ -18,6 +18,7 @@ import { extractInboundSummary, type ExtractedInboundSummary, type WhatsAppWebho
 import { classifyMessage } from "../rules/classifier.js";
 import { selectApprovedReply } from "../rules/approvedReplies.js";
 import { isStopMessage } from "../rules/stopDetection.js";
+import { extractAppointmentDetails } from "../rules/appointmentDetailExtraction.js";
 
 interface WebhookVerifyQuery {
   "hub.mode"?: string;
@@ -176,12 +177,22 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
 
       const inboundAt = parseMessageTimestamp(message.timestamp);
 
+      // Conservative appointment-detail extraction (rule-based, no LLM):
+      // only attempted for appointment_request messages — see
+      // src/rules/appointmentDetailExtraction.ts. findOrCreateAndUpdateLead
+      // further gates these on the lead not already being opted out.
+      const appointmentDetails =
+        classification.category === "appointment_request" ? extractAppointmentDetails(message.text) : null;
+
       const lead = await findOrCreateAndUpdateLead({
         whatsappPhone: message.from,
         displayName: message.displayName,
         category: classification.category,
         escalationReason: classification.escalationReason,
         inboundAt,
+        extractedDisplayName: appointmentDetails?.displayName ?? undefined,
+        extractedRequestedServiceCategory: appointmentDetails?.requestedServiceCategory ?? undefined,
+        extractedPreferredDateTime: appointmentDetails?.preferredDateTime ?? undefined,
       });
 
       if (!lead) {
@@ -250,12 +261,6 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     // step), wire it to list/filter leads, message history, and
     // escalations, per Section 13 "Simple admin page or API endpoint".
 
-    // TODO (appointment detail collection flow): for
-    // category === "appointment_request", Section 9's reply already asks
-    // for name/service/preferred time in one message, but nothing yet
-    // parses a follow-up reply to fill leads.requested_service_category /
-    // preferred_date_time — that's a later, explicit build step, not
-    // implied by persisting the current inbound message alone.
 
     return reply.status(200).send({ received: true });
   });

@@ -47,6 +47,15 @@ export interface LeadPersistenceInput {
   category: EnquiryCategory;
   escalationReason: string | null;
   inboundAt: Date;
+  // Conservative, rule-based appointment-detail extraction (only ever
+  // populated by the caller for category === "appointment_request" —
+  // see src/rules/appointmentDetailExtraction.ts). Never overwrites an
+  // existing value with null/absent, and never applied to an
+  // already-opted-out lead (checked against the row's current opted_out
+  // state below, not the caller's).
+  extractedDisplayName?: string;
+  extractedRequestedServiceCategory?: string;
+  extractedPreferredDateTime?: string;
 }
 
 export interface LeadPersistenceResult {
@@ -66,16 +75,24 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
     const existing = await db.select().from(leads).where(eq(leads.whatsappPhone, input.whatsappPhone)).limit(1);
 
     if (existing.length === 0) {
+      // A brand-new lead cannot already be opted out, so the WhatsApp
+      // contact profile name and the extracted-from-text fallback are
+      // both safe to apply here (profile name still takes priority).
+      const effectiveDisplayName = input.displayName ?? input.extractedDisplayName;
       const initialStatus = computeLeadStatus("new", input.category);
       const inserted = await db
         .insert(leads)
         .values({
           whatsappPhone: input.whatsappPhone,
-          displayName: input.displayName ?? null,
+          displayName: effectiveDisplayName ?? null,
           leadStatus: initialStatus,
           primaryCategory: input.category,
           escalationReason: input.category === "human_escalation" ? input.escalationReason : null,
           lastInboundAt: input.inboundAt,
+          // A brand-new lead cannot already be opted out, so extracted
+          // appointment details are always safe to apply here.
+          requestedServiceCategory: input.extractedRequestedServiceCategory ?? null,
+          preferredDateTime: input.extractedPreferredDateTime ?? null,
         })
         .returning({ leadId: leads.leadId, optedOut: leads.optedOut });
 
@@ -93,14 +110,29 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
       lastInboundAt: input.inboundAt,
       updatedAt: new Date(),
     };
-    // Only overwrite display_name when this message actually carried one —
-    // a later message without a profile name must not erase a name we
-    // already have on file.
+    // Only overwrite display_name when this message actually carried a
+    // WhatsApp contact profile name — a later message without one must
+    // not erase a name we already have on file. This is unchanged,
+    // pre-existing behavior, independent of opt-out state.
     if (input.displayName) updateValues.displayName = input.displayName;
     // Only set escalation_reason when this message itself is an escalation
     // — a non-escalation message must not clear a still-open escalation
     // reason from a prior message.
     if (input.category === "human_escalation") updateValues.escalationReason = input.escalationReason;
+    // Rule-based extraction from message text (name fallback, service
+    // category, preferred date/time): only applied when (a) this message
+    // actually produced a value (never overwrite with null/absent, so an
+    // earlier-captured value survives a later message that doesn't repeat
+    // it) and (b) the lead is not already opted out — checked against the
+    // row's existing opted_out state, not the caller's, since extraction
+    // must never apply to an opted-out lead's messages. The extracted name
+    // is still only a fallback: it never overwrites an already-known
+    // display_name (profile-supplied or previously extracted).
+    if (!lead.optedOut) {
+      if (input.extractedDisplayName && !lead.displayName) updateValues.displayName = updateValues.displayName ?? input.extractedDisplayName;
+      if (input.extractedRequestedServiceCategory) updateValues.requestedServiceCategory = input.extractedRequestedServiceCategory;
+      if (input.extractedPreferredDateTime) updateValues.preferredDateTime = input.extractedPreferredDateTime;
+    }
 
     await db.update(leads).set(updateValues).where(eq(leads.leadId, lead.leadId));
 
