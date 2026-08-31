@@ -48,11 +48,19 @@ export interface LeadPersistenceInput {
   inboundAt: Date;
 }
 
+export interface LeadPersistenceResult {
+  leadId: string;
+  optedOut: boolean;
+}
+
 // Finds the lead by whatsapp_phone, or creates one, then updates only the
 // fields this build step is responsible for (Section 10 model). This never
 // stores photographs, medical reports, prescriptions, detailed health
 // history, or payment data — only the administrative fields listed below.
-export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Promise<string | null> {
+// Returns the lead's current opted_out state alongside its id, so callers
+// (e.g. the outbound-reply step) can respect an existing opt-out without a
+// second lookup — this function does not itself set or clear opted_out.
+export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Promise<LeadPersistenceResult | null> {
   try {
     const existing = await db.select().from(leads).where(eq(leads.whatsappPhone, input.whatsappPhone)).limit(1);
 
@@ -68,10 +76,10 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
           escalationReason: input.category === "human_escalation" ? input.escalationReason : null,
           lastInboundAt: input.inboundAt,
         })
-        .returning({ leadId: leads.leadId });
+        .returning({ leadId: leads.leadId, optedOut: leads.optedOut });
 
       logger.info("webhook_lead_created", { leadId: inserted[0].leadId, leadStatus: initialStatus, category: input.category });
-      return inserted[0].leadId;
+      return { leadId: inserted[0].leadId, optedOut: inserted[0].optedOut };
     }
 
     const lead = existing[0];
@@ -96,13 +104,26 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
     await db.update(leads).set(updateValues).where(eq(leads.leadId, lead.leadId));
 
     logger.info("webhook_lead_updated", { leadId: lead.leadId, leadStatus: nextStatus, category: input.category });
-    return lead.leadId;
+    return { leadId: lead.leadId, optedOut: lead.optedOut };
   } catch (error) {
     logger.error("webhook_lead_persistence_failed", {
       whatsappPhone: input.whatsappPhone,
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
+  }
+}
+
+// Sets last_outbound_at after a successful send. Called only on send
+// success — a failed send should not claim an outbound message went out.
+export async function updateLeadLastOutboundAt(leadId: string, sentAt: Date): Promise<void> {
+  try {
+    await db.update(leads).set({ lastOutboundAt: sentAt, updatedAt: new Date() }).where(eq(leads.leadId, leadId));
+  } catch (error) {
+    logger.error("webhook_lead_last_outbound_update_failed", {
+      leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -134,6 +155,43 @@ export async function persistInboundMessage(input: MessagePersistenceInput): Pro
     return true;
   } catch (error) {
     logger.error("webhook_message_persistence_failed", {
+      messageId: input.messageId,
+      leadId: input.leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+export interface OutboundMessagePersistenceInput {
+  messageId: string;
+  leadId: string;
+  text: string;
+  classification: ClassificationResult;
+  sentAt: Date;
+  status: "sent" | "failed";
+}
+
+// Inserts the outbound reply attempt into message_log (Section 10), mirroring
+// persistInboundMessage but with direction: "outbound". Records both
+// successful and failed send attempts, so message_log stays a complete
+// audit trail of what was attempted, not just what succeeded.
+export async function persistOutboundMessage(input: OutboundMessagePersistenceInput): Promise<boolean> {
+  try {
+    await db.insert(messageLog).values({
+      messageId: input.messageId,
+      leadId: input.leadId,
+      direction: "outbound",
+      text: input.text,
+      receivedOrSentAt: input.sentAt,
+      classification: input.classification.category,
+      automated: true,
+      status: input.status,
+    });
+    logger.info("webhook_outbound_message_persisted", { messageId: input.messageId, leadId: input.leadId, status: input.status });
+    return true;
+  } catch (error) {
+    logger.error("webhook_outbound_message_persistence_failed", {
       messageId: input.messageId,
       leadId: input.leadId,
       error: error instanceof Error ? error.message : String(error),

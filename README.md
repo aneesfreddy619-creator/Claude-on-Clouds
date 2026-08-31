@@ -54,10 +54,11 @@ npm start
   come from environment variables only — never hardcode them.
 - `GET /webhook` verification, `POST /webhook` signature verification,
   duplicate protection, rule-based classification, approved-reply
-  selection, and lead/inbound-message persistence are implemented. Actually
-  sending a WhatsApp reply, creating `escalations` rows, wiring
-  `/admin` to real data, and appointment detail collection are not yet
-  implemented — see the `TODO` comments in `src/routes/webhook.ts` and
+  selection, lead/inbound-message persistence, and sending the approved
+  reply back through the WhatsApp Cloud API are implemented. Creating
+  `escalations` rows, wiring `/admin` to real data, appointment detail
+  collection, and STOP/opt-out handling are not yet implemented — see the
+  `TODO` comments in `src/routes/webhook.ts` and
   `v0-implementation-decisions.md`.
 - `src/routes/webhook.ts` is orchestration only. Signature verification
   lives in `src/security/`, dedupe and persistence in `src/services/`,

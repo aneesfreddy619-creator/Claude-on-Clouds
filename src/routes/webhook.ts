@@ -1,9 +1,17 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { verifyWebhookSignature } from "../security/webhookSignature.js";
 import { checkDedupeStatus, type DedupeResult } from "../services/dedupe.js";
-import { findOrCreateAndUpdateLead, parseMessageTimestamp, persistInboundMessage } from "../services/persistence.js";
+import {
+  findOrCreateAndUpdateLead,
+  parseMessageTimestamp,
+  persistInboundMessage,
+  persistOutboundMessage,
+  updateLeadLastOutboundAt,
+} from "../services/persistence.js";
+import { sendWhatsAppTextReply } from "../services/whatsappSender.js";
 import { extractInboundSummary, type ExtractedInboundSummary, type WhatsAppWebhookPayload } from "../whatsapp/inboundPayload.js";
 import { classifyMessage } from "../rules/classifier.js";
 import { selectApprovedReply } from "../rules/approvedReplies.js";
@@ -130,7 +138,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
 
       const inboundAt = parseMessageTimestamp(message.timestamp);
 
-      const leadId = await findOrCreateAndUpdateLead({
+      const lead = await findOrCreateAndUpdateLead({
         whatsappPhone: message.from,
         displayName: message.displayName,
         category: classification.category,
@@ -138,7 +146,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         inboundAt,
       });
 
-      if (!leadId) {
+      if (!lead) {
         // Lead persistence failed (e.g. no reachable database) — do not
         // persist the message either, since message_log.lead_id is a
         // required foreign key (src/db/schema/messageLog.ts) and we must
@@ -149,20 +157,38 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
 
       await persistInboundMessage({
         messageId: message.id,
-        leadId,
+        leadId: lead.leadId,
         text: message.text,
         classification,
         receivedAt: inboundAt,
       });
-    }
 
-    // TODO (reply sending): actually call the WhatsApp Cloud API send
-    // endpoint with the approved reply text computed above — not
-    // implemented here, this step only classifies, persists, and logs what
-    // the reply would be. Must NOT run for "duplicate" (already replied) or
-    // "dedupe_unavailable" (can't prove we haven't already replied) —
-    // only "not_duplicate" is safe to act on, and never more than once per
-    // inbound message.
+      // Outbound reply sending: only reached after signature verification,
+      // dedupe, classification, approved-reply selection, and lead/inbound
+      // message persistence have all already happened above — matches the
+      // existing pipeline order exactly, with sending appended at the end.
+      if (lead.optedOut) {
+        logger.info("webhook_reply_skipped", { messageId: message.id, leadId: lead.leadId, reason: "opted_out" });
+        continue;
+      }
+
+      const sendResult = await sendWhatsAppTextReply(message.from, approvedReply.text);
+      const sentAt = new Date();
+      const outboundMessageId = sendResult.whatsappMessageId ?? `local-failed-${randomUUID()}`;
+
+      await persistOutboundMessage({
+        messageId: outboundMessageId,
+        leadId: lead.leadId,
+        text: approvedReply.text,
+        classification,
+        sentAt,
+        status: sendResult.success ? "sent" : "failed",
+      });
+
+      if (sendResult.success) {
+        await updateLeadLastOutboundAt(lead.leadId, sentAt);
+      }
+    }
 
     // TODO (escalation flow): for classification.category ===
     // "human_escalation" (Section 6/7), create an escalations row
