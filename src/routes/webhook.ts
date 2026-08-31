@@ -5,6 +5,8 @@ import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
 import { messageLog } from "../db/schema/messageLog.js";
+import { classifyMessage } from "../rules/classifier.js";
+import { selectApprovedReply } from "../rules/approvedReplies.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -30,15 +32,29 @@ interface WhatsAppWebhookPayload {
       field?: string;
       value?: {
         metadata?: { phone_number_id?: string };
-        messages?: Array<{ id?: string; from?: string; timestamp?: string; type?: string }>;
+        messages?: Array<{
+          id?: string;
+          from?: string;
+          timestamp?: string;
+          type?: string;
+          text?: { body?: string };
+        }>;
         statuses?: Array<{ id?: string; status?: string }>;
       };
     }>;
   }>;
 }
 
+interface InboundMessage {
+  id?: string;
+  from?: string;
+  type?: string;
+  text?: string;
+}
+
 interface ExtractedInboundSummary {
   entryCount: number;
+  messages: InboundMessage[];
   messageIds: string[];
   senders: string[];
   messageTypes: string[];
@@ -46,6 +62,7 @@ interface ExtractedInboundSummary {
 }
 
 function extractInboundSummary(payload: WhatsAppWebhookPayload): ExtractedInboundSummary {
+  const messages: InboundMessage[] = [];
   const messageIds: string[] = [];
   const senders: string[] = [];
   const messageTypes: string[] = [];
@@ -57,6 +74,7 @@ function extractInboundSummary(payload: WhatsAppWebhookPayload): ExtractedInboun
       // Status-event payloads (delivered/read/etc.) are logged but never
       // fed into the dedupe check.
       for (const message of change.value?.messages ?? []) {
+        messages.push({ id: message.id, from: message.from, type: message.type, text: message.text?.body });
         if (message.id) messageIds.push(message.id);
         if (message.from) senders.push(message.from);
         if (message.type) messageTypes.push(message.type);
@@ -69,6 +87,7 @@ function extractInboundSummary(payload: WhatsAppWebhookPayload): ExtractedInboun
 
   return {
     entryCount: payload.entry?.length ?? 0,
+    messages,
     messageIds,
     senders,
     messageTypes,
@@ -242,21 +261,54 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     // "not_duplicate" message IDs. Once rows exist here, "duplicate" will
     // naturally follow from the SELECT in checkDedupeStatus.
 
-    // TODO (classification): classify the inbound message using rule-based
-    // classification first (Section 6 categories, Section 19 operating
-    // principle: rules first). Only for "not_duplicate" message IDs.
+    // Classification + approved reply selection (Section 6 categories,
+    // Section 19 "rules first"): implemented via src/rules/classifier.ts
+    // and src/rules/approvedReplies.ts. This only runs for "not_duplicate"
+    // text messages and only LOGS the result — no WhatsApp send call
+    // happens here (see the reply-sending TODO below), and nothing is
+    // persisted (see the persistence TODOs above).
+    for (const message of summary?.messages ?? []) {
+      if (!message.id) continue;
 
-    // TODO (reply sending): generate and send a reply using only approved
-    // fixed replies from Section 8/9, or route to human escalation per
-    // Section 7/12 — never invent facts, prices, or clinic policy, and
-    // never send more than once per inbound message. Must NOT run for
-    // "duplicate" (already replied) or "dedupe_unavailable" (can't prove we
-    // haven't already replied) — only "not_duplicate" is safe to act on.
+      const dedupeResult = dedupeResults.get(message.id);
+      if (dedupeResult !== "not_duplicate") {
+        logger.info("webhook_classification_skipped", { messageId: message.id, reason: dedupeResult ?? "no_dedupe_result" });
+        continue;
+      }
 
-    // TODO (escalation flow): for human-escalation triggers (Section 6/7),
-    // create an escalations row (src/db/schema/escalations.ts) and stop
-    // automated conversational handling, per Section 12. Same
-    // "not_duplicate" gate applies before creating an escalation.
+      if (message.type !== "text" || !message.text) {
+        logger.info("webhook_classification_skipped", { messageId: message.id, reason: "non_text_message" });
+        continue;
+      }
+
+      const classification = classifyMessage(message.text);
+      const approvedReply = selectApprovedReply(classification);
+
+      logger.info("webhook_classification_result", {
+        messageId: message.id,
+        category: classification.category,
+        escalationReason: classification.escalationReason,
+        matchedRule: classification.matchedRule,
+        languageHint: classification.languageHint,
+        requiredAction: approvedReply.requiredAction,
+        replyText: approvedReply.text,
+      });
+    }
+
+    // TODO (reply sending): actually call the WhatsApp Cloud API send
+    // endpoint with approvedReply.text computed above — not implemented
+    // here, this step only classifies and logs what the reply would be.
+    // Must NOT run for "duplicate" (already replied) or
+    // "dedupe_unavailable" (can't prove we haven't already replied) —
+    // only "not_duplicate" is safe to act on, and never more than once per
+    // inbound message.
+
+    // TODO (escalation flow): for classification.category ===
+    // "human_escalation" (Section 6/7), create an escalations row
+    // (src/db/schema/escalations.ts) using classification.escalationReason
+    // and approvedReply.requiredAction, and stop automated conversational
+    // handling, per Section 12. Same "not_duplicate" gate applies before
+    // creating an escalation.
 
     return reply.status(200).send({ received: true });
   });
