@@ -48,6 +48,32 @@ npm run build
 npm start
 ```
 
+### Tests
+
+```bash
+npm test
+```
+
+Runs the deterministic unit/route tests (Node's built-in test runner via
+`tsx --test`) — no new dependency was added for this. These tests use
+fixed, non-secret test credentials and an intentionally unreachable
+`DATABASE_URL`, so they never touch a real database or send a real
+WhatsApp message; anything that requires a live Postgres connection or a
+live Meta test number is out of this suite's scope (see the test files'
+own comments for which cases are and aren't covered).
+
+### Deployment (Railway + Supabase)
+
+There is no Railway config file in this repo, and `npm run db:migrate` is
+**not** run automatically on deploy or app startup — nothing in `build`/
+`start` calls it. Before (or immediately after) deploying a build whose
+schema changed, run `npm run db:migrate` against the target `DATABASE_URL`
+yourself (locally, pointed at the production database, or via Railway's
+one-off command runner) to avoid the running app hitting a schema that
+doesn't match its code. This is a manual step by design — not automated —
+so a deploy never silently runs a migration against a database that isn't
+ready for it.
+
 ### Notes
 
 - All secrets (WhatsApp tokens, verify token, admin credentials, database URL)

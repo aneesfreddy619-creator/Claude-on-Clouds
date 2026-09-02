@@ -7,15 +7,20 @@ import { db } from "../db/client.js";
 import { leads } from "../db/schema/leads.js";
 import { messageLog } from "../db/schema/messageLog.js";
 import { escalations } from "../db/schema/escalations.js";
+import { deleteLeadAndHistory } from "../services/persistence.js";
 
-// Read-only admin inspection page for Clinic Lead Desk V0 (Section 13
-// "Simple admin page or API endpoint"). Shows only the most recent rows —
-// no edit/delete/assignment actions, no search/filter/export, per the
-// locked V0 scope. Protected by basic password protection using
-// ADMIN_BASIC_AUTH_USER / ADMIN_BASIC_AUTH_PASSWORD (env vars only,
-// already defined from the original scaffold), matching the locked
-// implementation decision ("Admin protection: Basic password protection").
+// Admin inspection page for Clinic Lead Desk V0 (Section 13 "Simple admin
+// page or API endpoint"). Read-only except for one action: deleting a test
+// lead and its history (Section 13 "Provide a clear deletion function for
+// a test lead and its message history"). No edit/assignment actions, no
+// search/filter/export, per the locked V0 scope. Protected by basic
+// password protection using ADMIN_BASIC_AUTH_USER / ADMIN_BASIC_AUTH_PASSWORD
+// (env vars only), matching the locked implementation decision ("Admin
+// protection: Basic password protection") — the delete route below reuses
+// the exact same auth check as the read view, so it never weakens it.
 const ADMIN_ROW_LIMIT = 50;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function timingSafeEqualStrings(a: string, b: string): boolean {
   const bufferA = Buffer.from(a, "utf8");
@@ -85,7 +90,28 @@ interface EscalationRow {
   createdAt: Date;
 }
 
-function renderAdminPage(data: { leads: LeadRow[]; messages: MessageRow[]; escalations: EscalationRow[] }): string {
+interface StatusMessage {
+  kind: "success" | "error";
+  text: string;
+}
+
+// Maps the tiny query-flag vocabulary POST /admin/leads/:leadId/delete
+// redirects with back into a plain status line — no session/flash storage,
+// just a query param read once on the next GET, matching the page's
+// existing "minimal, practical, not polished" style.
+function statusMessageFromQuery(query: { deleted?: string; error?: string }): StatusMessage | null {
+  if (query.deleted === "1") return { kind: "success", text: "Lead and its message/escalation history were deleted." };
+  if (query.error === "delete_failed") return { kind: "error", text: "Deletion failed. Check server logs for details." };
+  if (query.error === "invalid_lead_id") return { kind: "error", text: "Invalid lead id — nothing was deleted." };
+  return null;
+}
+
+function renderAdminPage(data: {
+  leads: LeadRow[];
+  messages: MessageRow[];
+  escalations: EscalationRow[];
+  statusMessage: StatusMessage | null;
+}): string {
   const leadRows = data.leads
     .map(
       (lead) => `<tr>
@@ -98,6 +124,11 @@ function renderAdminPage(data: { leads: LeadRow[]; messages: MessageRow[]; escal
         <td>${cell(lead.lastInboundAt?.toISOString())}</td>
         <td>${cell(lead.lastOutboundAt?.toISOString())}</td>
         <td>${cell(lead.updatedAt.toISOString())}</td>
+        <td>
+          <form method="POST" action="/admin/leads/${encodeURIComponent(lead.leadId)}/delete" style="margin:0;" onsubmit="return confirm('Delete this test lead and all its messages/escalations? This cannot be undone.');">
+            <button type="submit">Delete</button>
+          </form>
+        </td>
       </tr>`
     )
     .join("\n");
@@ -129,6 +160,10 @@ function renderAdminPage(data: { leads: LeadRow[]; messages: MessageRow[]; escal
     )
     .join("\n");
 
+  const statusHtml = data.statusMessage
+    ? `<p class="status ${data.statusMessage.kind}">${escapeHtml(data.statusMessage.text)}</p>`
+    : "";
+
   return `<!doctype html>
 <html>
 <head>
@@ -142,16 +177,20 @@ function renderAdminPage(data: { leads: LeadRow[]; messages: MessageRow[]; escal
   th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; vertical-align: top; }
   th { background: #f0f0f0; }
   .note { color: #555; font-size: 0.85rem; }
+  .status { padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; }
+  .status.success { background: #e6f4ea; color: #1e7e34; }
+  .status.error { background: #fdecea; color: #b02a37; }
 </style>
 </head>
 <body>
-<h1>Clinic Lead Desk V0 — Admin (read-only)</h1>
-<p class="note">Test shell only. Showing the most recent ${ADMIN_ROW_LIMIT} rows per table.</p>
+<h1>Clinic Lead Desk V0 — Admin</h1>
+<p class="note">Test shell only. Showing the most recent ${ADMIN_ROW_LIMIT} rows per table. Deleting a lead removes its message and escalation history and cannot be undone.</p>
+${statusHtml}
 
 <h2>Leads (${data.leads.length})</h2>
 <table>
-<tr><th>Phone</th><th>Display name</th><th>Status</th><th>Category</th><th>Escalation reason</th><th>Opted out</th><th>Last inbound</th><th>Last outbound</th><th>Updated</th></tr>
-${leadRows || '<tr><td colspan="9">No leads yet.</td></tr>'}
+<tr><th>Phone</th><th>Display name</th><th>Status</th><th>Category</th><th>Escalation reason</th><th>Opted out</th><th>Last inbound</th><th>Last outbound</th><th>Updated</th><th>Actions</th></tr>
+${leadRows || '<tr><td colspan="10">No leads yet.</td></tr>'}
 </table>
 
 <h2>Recent messages (${data.messages.length})</h2>
@@ -170,56 +209,85 @@ ${escalationRows || '<tr><td colspan="7">No escalations yet.</td></tr>'}
 }
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/admin", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get(
+    "/admin",
+    async (request: FastifyRequest<{ Querystring: { deleted?: string; error?: string } }>, reply: FastifyReply) => {
+      if (!isAuthorized(request)) {
+        logger.warn("admin_access_denied", { ip: request.ip });
+        return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
+      }
+
+      try {
+        const [leadRows, messageRows, escalationRows] = await Promise.all([
+          db.select().from(leads).orderBy(desc(leads.updatedAt)).limit(ADMIN_ROW_LIMIT),
+          db
+            .select({
+              messageId: messageLog.messageId,
+              whatsappPhone: leads.whatsappPhone,
+              direction: messageLog.direction,
+              text: messageLog.text,
+              classification: messageLog.classification,
+              status: messageLog.status,
+              receivedOrSentAt: messageLog.receivedOrSentAt,
+            })
+            .from(messageLog)
+            .leftJoin(leads, eq(messageLog.leadId, leads.leadId))
+            .orderBy(desc(messageLog.receivedOrSentAt))
+            .limit(ADMIN_ROW_LIMIT),
+          db
+            .select({
+              escalationId: escalations.escalationId,
+              whatsappPhone: leads.whatsappPhone,
+              displayName: leads.displayName,
+              lastUserMessage: escalations.lastUserMessage,
+              escalationReason: escalations.escalationReason,
+              requiredAction: escalations.requiredAction,
+              status: escalations.status,
+              createdAt: escalations.createdAt,
+            })
+            .from(escalations)
+            .leftJoin(leads, eq(escalations.leadId, leads.leadId))
+            .orderBy(desc(escalations.createdAt))
+            .limit(ADMIN_ROW_LIMIT),
+        ]);
+
+        logger.info("admin_page_viewed", {
+          leadCount: leadRows.length,
+          messageCount: messageRows.length,
+          escalationCount: escalationRows.length,
+        });
+
+        return reply.type("text/html").send(
+          renderAdminPage({
+            leads: leadRows,
+            messages: messageRows,
+            escalations: escalationRows,
+            statusMessage: statusMessageFromQuery(request.query),
+          })
+        );
+      } catch (error) {
+        logger.error("admin_data_fetch_failed", { error: error instanceof Error ? error.message : String(error) });
+        return reply.status(500).send("Failed to load admin data");
+      }
+    }
+  );
+
+  // Deletes a test lead and its message/escalation history (Section 13).
+  // Reuses the same isAuthorized() check as GET /admin — no separate,
+  // weaker auth path for the destructive action.
+  app.post("/admin/leads/:leadId/delete", async (request: FastifyRequest<{ Params: { leadId: string } }>, reply: FastifyReply) => {
     if (!isAuthorized(request)) {
       logger.warn("admin_access_denied", { ip: request.ip });
       return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
     }
 
-    try {
-      const [leadRows, messageRows, escalationRows] = await Promise.all([
-        db.select().from(leads).orderBy(desc(leads.updatedAt)).limit(ADMIN_ROW_LIMIT),
-        db
-          .select({
-            messageId: messageLog.messageId,
-            whatsappPhone: leads.whatsappPhone,
-            direction: messageLog.direction,
-            text: messageLog.text,
-            classification: messageLog.classification,
-            status: messageLog.status,
-            receivedOrSentAt: messageLog.receivedOrSentAt,
-          })
-          .from(messageLog)
-          .leftJoin(leads, eq(messageLog.leadId, leads.leadId))
-          .orderBy(desc(messageLog.receivedOrSentAt))
-          .limit(ADMIN_ROW_LIMIT),
-        db
-          .select({
-            escalationId: escalations.escalationId,
-            whatsappPhone: leads.whatsappPhone,
-            displayName: leads.displayName,
-            lastUserMessage: escalations.lastUserMessage,
-            escalationReason: escalations.escalationReason,
-            requiredAction: escalations.requiredAction,
-            status: escalations.status,
-            createdAt: escalations.createdAt,
-          })
-          .from(escalations)
-          .leftJoin(leads, eq(escalations.leadId, leads.leadId))
-          .orderBy(desc(escalations.createdAt))
-          .limit(ADMIN_ROW_LIMIT),
-      ]);
-
-      logger.info("admin_page_viewed", {
-        leadCount: leadRows.length,
-        messageCount: messageRows.length,
-        escalationCount: escalationRows.length,
-      });
-
-      return reply.type("text/html").send(renderAdminPage({ leads: leadRows, messages: messageRows, escalations: escalationRows }));
-    } catch (error) {
-      logger.error("admin_data_fetch_failed", { error: error instanceof Error ? error.message : String(error) });
-      return reply.status(500).send("Failed to load admin data");
+    const { leadId } = request.params;
+    if (!UUID_PATTERN.test(leadId)) {
+      logger.warn("admin_lead_deletion_rejected", { leadId, reason: "invalid_lead_id" });
+      return reply.redirect("/admin?error=invalid_lead_id");
     }
+
+    const success = await deleteLeadAndHistory(leadId);
+    return reply.redirect(success ? "/admin?deleted=1" : "/admin?error=delete_failed");
   });
 }

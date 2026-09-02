@@ -323,3 +323,29 @@ export async function createEscalation(input: EscalationPersistenceInput): Promi
     return false;
   }
 }
+
+// Deletes a test lead and its full history, per Section 13 "Security
+// requirements": "Provide a clear deletion function for a test lead and
+// its message history." escalations.lead_id and message_log.lead_id are
+// both NOT NULL foreign keys to leads.lead_id with ON DELETE no action
+// (drizzle/0000_slimy_bloodstrike.sql), so child rows are deleted first,
+// explicitly, inside one transaction — chosen over adding ON DELETE
+// CASCADE to the schema, which would silently change delete behavior for
+// every future deletion path, not just this one admin action.
+export async function deleteLeadAndHistory(leadId: string): Promise<boolean> {
+  try {
+    await db.transaction(async (tx) => {
+      await tx.delete(escalations).where(eq(escalations.leadId, leadId));
+      await tx.delete(messageLog).where(eq(messageLog.leadId, leadId));
+      await tx.delete(leads).where(eq(leads.leadId, leadId));
+    });
+    logger.info("admin_lead_deleted", { leadId });
+    return true;
+  } catch (error) {
+    logger.error("admin_lead_deletion_failed", {
+      leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
