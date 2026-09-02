@@ -47,6 +47,40 @@ function isAuthorized(request: FastifyRequest): boolean {
   return timingSafeEqualStrings(user, env.admin.basicAuthUser) && timingSafeEqualStrings(password, env.admin.basicAuthPassword);
 }
 
+export interface SerializedError {
+  name: string;
+  message: string;
+  code?: string;
+  cause?: SerializedError;
+}
+
+// Drizzle wraps every driver-level failure in a DrizzleQueryError whose own
+// .message is only "Failed query: ...\nparams: ..." — the actual
+// PostgreSQL/driver error (the real reason, and for real SQL errors the
+// SQLSTATE via .code) lives on .cause, one level down. This walks that
+// chain (depth-bounded, so a pathological/circular cause can't loop
+// forever) so admin_data_fetch_failed logs the real cause instead of just
+// Drizzle's generic wrapper message. Only structural error fields (name,
+// message, code) are captured — never the query text, its bound
+// parameters, DATABASE_URL, request headers, or any other secret.
+export function serializeError(error: unknown, depth = 3): SerializedError {
+  if (!(error instanceof Error)) {
+    return { name: "UnknownError", message: String(error) };
+  }
+
+  const serialized: SerializedError = { name: error.name, message: error.message };
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string") serialized.code = code;
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (depth > 0 && cause instanceof Error) {
+    serialized.cause = serializeError(cause, depth - 1);
+  }
+
+  return serialized;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
@@ -266,7 +300,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           })
         );
       } catch (error) {
-        logger.error("admin_data_fetch_failed", { error: error instanceof Error ? error.message : String(error) });
+        logger.error("admin_data_fetch_failed", { error: serializeError(error) });
         return reply.status(500).send("Failed to load admin data");
       }
     }
