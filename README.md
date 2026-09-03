@@ -55,12 +55,35 @@ npm test
 ```
 
 Runs the deterministic unit/route tests (Node's built-in test runner via
-`tsx --test`) — no new dependency was added for this. These tests use
-fixed, non-secret test credentials and an intentionally unreachable
+`tsx --test`) — no new dependency was added for this. Most of these tests
+use fixed, non-secret test credentials and an intentionally unreachable
 `DATABASE_URL`, so they never touch a real database or send a real
-WhatsApp message; anything that requires a live Postgres connection or a
-live Meta test number is out of this suite's scope (see the test files'
-own comments for which cases are and aren't covered).
+WhatsApp message; a live Meta test number is out of this suite's scope
+entirely (see the test files' own comments for which cases are and aren't
+covered).
+
+One exception: `src/routes/webhook.persistence.test.ts` proves the
+DB-backed success/dedupe paths (a signed inbound message creates a lead
+and one `message_log` row; a duplicate delivery creates only one; a
+status-event payload creates neither) that an unreachable database can't
+exercise. It needs a **local, throwaway PostgreSQL instance** reachable at
+`postgres://clinic_test:clinic_test_pw@localhost:5432/clinic_lead_desk_test`
+before you run `npm test`. This is a manual prerequisite, not automated by
+`npm test` itself:
+
+```bash
+# start a local Postgres (e.g. the OS package) and then:
+psql -c "CREATE ROLE clinic_test LOGIN PASSWORD 'clinic_test_pw';"
+psql -c "CREATE DATABASE clinic_lead_desk_test OWNER clinic_test;"
+PGPASSWORD=clinic_test_pw psql -h localhost -U clinic_test -d clinic_lead_desk_test \
+  -f drizzle/0000_slimy_bloodstrike.sql
+```
+
+This local database is entirely separate from the project's real
+Supabase database — it's only ever used by this one test file, is never
+touched by `npm run db:migrate`, and can be dropped after the test run.
+If it isn't set up, only that test file's 3 cases fail with a connection
+error; the rest of the suite is unaffected.
 
 ### Deployment (Railway + Supabase)
 
