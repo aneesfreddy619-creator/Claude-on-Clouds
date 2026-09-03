@@ -14,7 +14,7 @@ This V0 system must:
 - Route sensitive, medical, urgent, complaint, refund, privacy, abusive, or unclear cases to a human.
 - Log messages, classifications, statuses, timestamps, and escalation reasons.
 
-**This is a test shell, not a production medical assistant.** It must first run on a Meta-provided WhatsApp Cloud API test number and communicate only with approved test recipients.
+**This is a test shell, not a production medical assistant.** It must run on a Meta-provided WhatsApp Cloud API test number and communicate only with approved test recipients in V0.
 
 ## 2. Product promise
 
@@ -49,7 +49,20 @@ Until V0 works end to end on the Meta WhatsApp test number, keep the project loc
 - Advanced RAG or knowledge-base ingestion.
 - Any feature not required to make the test shell run safely on WhatsApp.
 
-## 4. V0 goal
+## 4. Current milestone status
+
+Current checkpoint for this workspace:
+- Meta developer app and WhatsApp product have been set up.
+- Meta-provided test number has been claimed.
+- At least one approved test recipient number has been added and verified.
+- Outbound Meta test-template send has been validated.
+- Inbound WhatsApp message payload has been observed successfully in Meta test webhooks.
+- Railway production secret values have **not** yet been entered.
+- Deployed backend ingestion and admin verification are the next milestone.
+
+Treat this as the current state unless explicitly updated.
+
+## 5. V0 goal
 
 When a test user sends a WhatsApp message, the system should:
 
@@ -61,7 +74,7 @@ When a test user sends a WhatsApp message, the system should:
 6. Create a human-handoff task for sensitive, uncertain, medical, complaint, or urgent messages.
 7. Record the message, classification, reply, status, timestamps, and escalation reason.
 
-## 5. Demo clinic configuration
+## 6. Demo clinic configuration
 
 Use a fictional clinic. Do not use real patient or clinic data.
 
@@ -85,7 +98,7 @@ clinic:
   escalation_contact: "demo-reception@example.com"
 ```
 
-## 6. Supported enquiry categories
+## 7. Supported enquiry categories
 
 Classify every inbound message into exactly one primary category:
 
@@ -105,7 +118,7 @@ Immediately classify as `human_escalation` if the message includes or appears to
 - A request for a custom quote, a discount, guaranteed outcome, or a treatment recommendation.
 - Unclear intent after one allowed clarification question.
 
-## 7. Hard safety rules
+## 8. Hard safety rules
 
 The assistant must never:
 
@@ -119,7 +132,7 @@ The assistant must never:
 
 When in doubt: hand off to a human.
 
-## 8. Approved knowledge
+## 9. Approved knowledge
 
 The system may use only the following source of truth in V0:
 
@@ -136,7 +149,7 @@ faq:
   human_request: "I’m notifying the reception team. They will assist you as soon as possible during clinic hours."
 ```
 
-## 9. Conversation behaviour
+## 10. Conversation behaviour
 
 ### Tone
 - Polite, short, calm, and professional.
@@ -167,7 +180,7 @@ faq:
 **Human request**
 > I’m notifying the reception team. They will assist you as soon as possible during clinic hours.
 
-## 10. Lead data model
+## 11. Lead data model
 
 Store only minimum administrative data.
 
@@ -204,7 +217,7 @@ message_log:
 
 Do not store photographs, medical reports, detailed health history, prescriptions, or payment data.
 
-## 11. Workflow specification
+## 12. Workflow specification
 
 ```text
 Incoming WhatsApp message
@@ -213,7 +226,7 @@ Incoming WhatsApp message
   -> find or create lead by sender phone number
   -> log inbound message
   -> if opted out: do not send automated reply
-  -> classify message using rules first, model second
+  -> classify message using rules only in the current V0 milestone
   -> if human escalation trigger:
        set lead_status = human_escalation
        create staff task/notification
@@ -230,11 +243,11 @@ Incoming WhatsApp message
   -> write audit event and errors to logs
 ```
 
-## 12. Human handoff
+## 13. Human handoff
 
-V0 handoff can be an email notification, a Slack/Teams message, or a row in an `escalations` table.
+V0 handoff must be a row in an `escalations` table first.
 
-The notification must include:
+The notification or record must include:
 - Lead phone number and available display name.
 - Last user message.
 - Classification and escalation reason.
@@ -242,7 +255,29 @@ The notification must include:
 - Timestamp.
 - Required action: `reply`, `call`, `review complaint`, or `clinical team review`.
 
-## 13. Implementation requirements
+## 14. Simple system map
+
+Mental model for the build:
+
+```text
+Customer on WhatsApp
+        |
+        v
+Meta WhatsApp Cloud API
+        |
+        v
+Backend Server (Fastify)
+        |
+        +--> Rule engine
+        +--> Leads table
+        +--> Message log table
+        +--> Escalations table
+        +--> Simple protected admin view / API
+```
+
+The customer-facing experience is only the WhatsApp chat. The operator-facing experience is the protected admin inspection layer.
+
+## 15. Implementation requirements
 
 ### Required components
 - Meta WhatsApp Cloud API test number.
@@ -251,32 +286,36 @@ The notification must include:
 - `POST /webhook` for incoming WhatsApp events.
 - Signature verification for incoming webhook events.
 - WhatsApp message send function using the Cloud API.
-- Database: SQLite for local proof of concept; PostgreSQL/Supabase for deployable test environment.
+- Database: PostgreSQL / Supabase for the deployable test environment.
 - Environment variables for all secrets.
 - Structured logs.
 - Simple admin page or API endpoint to inspect leads, messages, statuses, and escalations.
 
-### Suggested implementation stack
+### Locked implementation stack for current V0
 
 ```yaml
-backend: "Node.js + TypeScript + Express or Fastify"
-database: "PostgreSQL / Supabase"
-workflow: "Server-side implementation first; n8n optional later"
-model_layer: "configurable API model, constrained by rules and approved knowledge"
-deployment: "Render, Railway, Fly.io, Vercel server functions, or equivalent HTTPS host"
-local_tunnel: "ngrok or Cloudflare Tunnel for local webhook testing"
+backend: "Node.js + TypeScript + Fastify"
+database: "Supabase Postgres"
+orm: "Drizzle"
+deployment: "Railway"
+local_tunnel: "Cloudflare Tunnel or ngrok"
+admin_protection: "Basic password protection"
+human_handoff: "escalations table first"
+model_layer: "None in the current V0 milestone"
+workflow_tools: "No n8n, Make, or Pipedream in the current V0 milestone"
+whatsapp_path: "Meta WhatsApp Cloud API test number only"
 ```
 
 ### Security requirements
 - Never hardcode access tokens, app secrets, API keys, or verify tokens.
-- Use `.env` locally and platform secret storage after deployment.
+- Use `.env` locally and Railway secret storage after deployment.
 - Verify Meta webhook signatures before processing events.
 - Deduplicate webhook deliveries using WhatsApp message IDs.
 - Restrict admin access using a password or basic authentication in V0.
 - Keep test data separate from future client data.
 - Provide a clear deletion function for a test lead and its message history.
 
-## 14. WhatsApp setup requirements
+## 16. WhatsApp setup requirements
 
 1. Create a Meta developer app of the appropriate business type.
 2. Add the WhatsApp product.
@@ -288,7 +327,7 @@ local_tunnel: "ngrok or Cloudflare Tunnel for local webhook testing"
 8. Subscribe to `messages` events; subscribe to message status events if available.
 9. Send a test message and confirm incoming messages create lead records and replies.
 
-## 15. Acceptance tests
+## 17. Acceptance tests
 
 | Test message | Expected outcome |
 |---|---|
@@ -303,7 +342,7 @@ local_tunnel: "ngrok or Cloudflare Tunnel for local webhook testing"
 | "STOP" | Set `opted_out = true`; send no further automated messages |
 | Same webhook delivered twice | One stored inbound message; one reply maximum |
 
-## 16. Non-goals for V0
+## 18. Non-goals for V0
 
 - Real clinic deployment.
 - Production patient data.
@@ -315,7 +354,7 @@ local_tunnel: "ngrok or Cloudflare Tunnel for local webhook testing"
 - Advanced RAG or knowledge-base ingestion.
 - Analytics beyond a simple lead and escalation dashboard.
 
-## 17. Definition of done
+## 19. Definition of done
 
 V0 is complete when a test user can message the Meta-provided WhatsApp test number and reliably observe:
 
@@ -326,7 +365,7 @@ V0 is complete when a test user can message the Meta-provided WhatsApp test numb
 5. Immediate human escalation for safety-sensitive messages.
 6. No medical advice, invented facts, duplicate replies, or exposed secrets.
 
-## 18. Build sequence
+## 20. Build sequence
 
 1. Scaffold backend, database schema, environment configuration, and health check.
 2. Implement webhook verification and signature verification.
@@ -334,89 +373,90 @@ V0 is complete when a test user can message the Meta-provided WhatsApp test numb
 4. Implement fixed rule-based categories and replies without an LLM.
 5. Implement human handoff and simple admin inspection endpoint.
 6. Connect the Meta test number and verify end-to-end WhatsApp testing.
-7. Add constrained model classification or extraction only after the rule-based flow works.
-8. Run all acceptance tests and document failures.
+7. Run all acceptance tests and document failures.
 
-## 19. Operating principle
-
-**Rules first. Approved knowledge second. Model assistance third. Human handoff whenever uncertain.**
-
-## 20. Non-coder launch checklist
+## 21. Non-coder launch checklist
 
 Use this checklist to track V0 setup progress without needing to read code.
 
 ### Setup foundations
-- [ ] Project folder/repo is created.
-- [ ] `clinic-lead-desk-v0-product-instructions.md` is present in the repo.
-- [ ] `v0-implementation-decisions.md` is present in the repo.
-- [ ] `task-template.md` is present in the repo.
-- [ ] Claude Code or another coding assistant can access the repo.
+- Project folder/repo is created.
+- `clinic-lead-desk-v0-product-instructions.md` is present in the repo.
+- `project-instructions.md` is present in the repo.
+- `v0-implementation-decisions.md` is present in the repo.
+- `task-template.md` is present in the repo.
+- `project-description.md` is present in the repo.
+- Claude Code or another coding assistant can access the repo.
 
 ### Backend scaffold
-- [ ] Node.js + TypeScript + Fastify backend scaffold is created.
-- [ ] `.env.example` exists.
-- [ ] `GET /health` works.
-- [ ] `GET /webhook` route exists.
-- [ ] `POST /webhook` route exists.
+- Node.js + TypeScript + Fastify backend scaffold is created.
+- `.env.example` exists.
+- `GET /health` works.
+- `GET /webhook` route exists.
+- `POST /webhook` route exists.
 
 ### Database
-- [ ] Supabase project is created.
-- [ ] `DATABASE_URL` is added to environment variables.
-- [ ] Drizzle schema exists for `leads`, `message_log`, and `escalations`.
-- [ ] Database migrations run successfully.
+- Supabase project is created.
+- `DATABASE_URL` is added to environment variables.
+- Drizzle schema exists for `leads`, `message_log`, and `escalations`.
+- Database migrations run successfully.
 
 ### WhatsApp and Meta
-- [ ] Meta developer app is created.
-- [ ] WhatsApp product is added in Meta.
-- [ ] Meta test phone number is available.
-- [ ] At least one test recipient number is verified.
-- [ ] Verify token is created and stored.
-- [ ] App secret is stored securely.
-- [ ] WhatsApp access token is stored securely.
-- [ ] Phone Number ID is stored securely.
+- Meta developer app is created.
+- WhatsApp product is added in Meta.
+- Meta test phone number is available.
+- At least one test recipient number is verified.
+- Verify token is created and stored.
+- App secret is stored securely.
+- WhatsApp access token is stored securely.
+- Phone Number ID is stored securely.
 
 ### Deployment
-- [ ] Railway project is created.
-- [ ] Backend is deployed to a public HTTPS URL.
-- [ ] All production environment variables are added in Railway.
-- [ ] Deployed `/health` route works.
+- Railway project is created.
+- Backend is deployed to a public HTTPS URL.
+- All production environment variables are added in Railway.
+- Deployed `GET /health` works.
 
 ### Webhook connection
-- [ ] Meta callback URL is set to the deployed `/webhook` endpoint.
-- [ ] Meta verify token matches the backend verify token.
-- [ ] Webhook verification succeeds.
-- [ ] `messages` event subscription is enabled.
-- [ ] Message status events are enabled if available.
+- Meta callback URL is set to the deployed webhook endpoint.
+- Meta verify token matches the backend verify token.
+- Webhook verification succeeds.
+- `messages` event subscription is enabled.
+- Message status events are enabled if available.
 
 ### Safety and rules
-- [ ] Signature verification is implemented.
-- [ ] Duplicate protection by WhatsApp message ID is implemented.
-- [ ] Rule-based classification is implemented.
-- [ ] Approved fixed replies are implemented.
-- [ ] STOP handling is implemented.
-- [ ] Human-request handling is implemented.
-- [ ] One-clarification fallback is implemented.
-- [ ] Human escalation flow is implemented.
+- Signature verification is implemented.
+- Duplicate protection by WhatsApp message ID is implemented.
+- Rule-based classification is implemented.
+- Approved fixed replies are implemented.
+- `STOP` handling is implemented.
+- Human-request handling is implemented.
+- One-clarification fallback is implemented.
+- Human escalation flow is implemented.
 
 ### Admin and inspection
-- [ ] Admin inspection route or page exists.
-- [ ] Leads can be viewed.
-- [ ] Message history can be viewed.
-- [ ] Escalations queue can be viewed.
-- [ ] Admin access is protected with basic authentication.
-- [ ] Test lead deletion works.
+- Admin inspection route or page exists.
+- Leads can be viewed.
+- Message history can be viewed.
+- Escalations queue can be viewed.
+- Admin access is protected with basic authentication.
+- Test lead deletion works.
 
 ### End-to-end V0 test
-- [ ] A test WhatsApp message reaches the backend.
-- [ ] A lead record is created or updated.
-- [ ] The correct automated reply is sent.
-- [ ] A risky message creates an escalation.
-- [ ] Duplicate webhook delivery does not create duplicate replies.
-- [ ] Acceptance tests from this document are run and checked.
+- A test WhatsApp message reaches the backend.
+- A lead record is created or updated.
+- The correct automated reply is sent.
+- A risky message creates an escalation.
+- Duplicate webhook delivery does not create duplicate replies.
+- Acceptance tests from this document are run and checked.
 
 ### V0 ready
-- [ ] Test user can message the Meta test number successfully.
-- [ ] System responds only with approved administrative replies.
-- [ ] Sensitive cases are handed off correctly.
-- [ ] Logs and records are visible.
-- [ ] No medical advice, invented facts, duplicate replies, or exposed secrets are observed.
+- Test user can message the Meta test number successfully.
+- System responds only with approved administrative replies.
+- Sensitive cases are handed off correctly.
+- Logs and records are visible.
+- No medical advice, invented facts, duplicate replies, or exposed secrets are observed.
+
+## 22. Operating principle
+
+**Rules first. Approved knowledge second. Human handoff whenever uncertain.**

@@ -14,37 +14,37 @@ Inside locked V0 scope. This file does not change the product requirements, safe
 - Local webhook testing: Cloudflare Tunnel or ngrok
 - Admin protection: Basic password protection
 - Human handoff: `escalations` table first
-- Model layer: None in V0; rule-based handling only
+- Model layer: None in the current V0 milestone; rule-based handling only
 - WhatsApp path: Meta WhatsApp Cloud API test number only
 
 ## Locked build rules
 - Rules first.
 - Approved knowledge second.
-- Model assistance third.
 - Human handoff whenever uncertain.
 - Approved fixed replies only.
 - No medical advice.
 - No appointment confirmation by the system.
 - No extra channels or integrations outside the V0 spec.
+- No n8n, Make, Pipedream, or equivalent workflow tooling in the current milestone.
+- No LLM classification or extraction in the current milestone.
 
-## Not included in V0
-- LLM classification for the current milestone
-- n8n, Make, or Pipedream
-- Automated calendar booking
-- Payment collection
-- Instagram, Facebook, or web-form integrations
-- Multi-client packaging
-- Advanced RAG or knowledge-base ingestion
+## Current checkpoint
+- Meta dashboard setup and test-number validation have been completed.
+- Inbound Meta test webhook payload has been observed.
+- Railway production secret values are still pending entry.
+- Next Claude task is read-only inspection of exact environment-variable names only.
+- No code, deployment, database, migration, or infrastructure changes should happen before that read-only inspection is complete.
 
 ## Build order for next chat
-1. Scaffold backend, environment configuration, and health check.
-2. Define Drizzle schema and migrations for leads, message_log, and escalations.
-3. Implement `GET /webhook` verification and `POST /webhook` handling.
-4. Add signature verification and duplicate protection by WhatsApp message ID.
-5. Implement rule-based classification and approved replies.
-6. Add missing-detail collection for appointment requests.
-7. Add escalation flow and simple admin inspection endpoint/view.
-8. Connect Meta test number and run acceptance tests.
+1. Inspect `src/config/env.ts` and report the exact required environment-variable names only.
+2. Set Railway secret values privately outside chat.
+3. Verify deployed environment configuration.
+4. Implement or verify `GET /webhook` verification and `POST /webhook` handling.
+5. Add signature verification and duplicate protection by WhatsApp message ID.
+6. Implement rule-based classification and approved replies.
+7. Add missing-detail collection for appointment requests.
+8. Add escalation flow and simple admin inspection endpoint/view.
+9. Connect the Meta test number to the deployed backend and run acceptance tests.
 
 ## Notes
 - This file is a working implementation decision record.
