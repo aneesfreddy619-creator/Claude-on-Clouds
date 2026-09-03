@@ -34,6 +34,8 @@ const { buildApp } = await import("../app.js");
 const { db } = await import("../db/client.js");
 const { leads } = await import("../db/schema/leads.js");
 const { messageLog } = await import("../db/schema/messageLog.js");
+const { escalations } = await import("../db/schema/escalations.js");
+const { NON_ESCALATION_REPLIES, ESCALATION_REPLIES } = await import("../rules/approvedReplies.js");
 const { eq } = await import("drizzle-orm");
 
 const APP_SECRET = "test-app-secret";
@@ -155,3 +157,203 @@ test("a status-event payload (no message content) creates no lead and no message
 
   await app.close();
 });
+
+// ---------------------------------------------------------------------------
+// Section 17 acceptance tests (clinic-lead-desk-v0-product-instructions.md)
+//
+// These drive the SAME rows as the §17 acceptance table end-to-end through a
+// real signed POST /webhook against a real Postgres, so the behaviour can be
+// proven WITHOUT depending on Meta actually delivering a webhook.
+//
+// How the approved reply is verified without sending anything: when
+// WHATSAPP_ACCESS_TOKEN/PHONE_NUMBER_ID are unset (as they are here),
+// sendWhatsAppTextReply fails closed on "missing_credentials" before any
+// network call — but src/routes/webhook.ts still persists the outbound
+// message_log row carrying the exact selected reply text with
+// status "failed". That row is therefore proof of WHICH approved reply the
+// pipeline chose, with zero outbound traffic.
+//
+// Expected reply text is always read from the exported constants in
+// src/rules/approvedReplies.ts — never retyped here — so these tests cannot
+// drift from the approved wording.
+//
+// SCOPE LIMIT: this proves the backend pipeline only. It does NOT satisfy
+// §19 "Definition of done", which still requires a real message sent to the
+// Meta test number and an approved reply observed in WhatsApp.
+// ---------------------------------------------------------------------------
+
+interface AcceptanceExpectation {
+  label: string;
+  text: string;
+  expectedClassification: string;
+  expectedReply: string;
+  expectedLeadStatus: string;
+  expectsEscalation: boolean;
+}
+
+async function runAcceptanceCase(expected: AcceptanceExpectation): Promise<void> {
+  const app = buildApp();
+  const from = `9199${Math.floor(Math.random() * 1000000000).toString().padStart(9, "0")}`;
+  const messageId = `wamid.${randomUUID()}`;
+
+  const response = await postSignedWebhook(app, textMessagePayload(messageId, from, expected.text));
+  assert.equal(response.statusCode, 200, `${expected.label}: webhook should ack with 200`);
+
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  assert.equal(leadRows.length, 1, `${expected.label}: exactly one lead expected`);
+  const lead = leadRows[0];
+  assert.equal(lead.leadStatus, expected.expectedLeadStatus, `${expected.label}: lead_status`);
+  assert.equal(lead.primaryCategory, expected.expectedClassification, `${expected.label}: primary_category`);
+
+  const rows = await db.select().from(messageLog).where(eq(messageLog.leadId, lead.leadId));
+
+  const inbound = rows.filter((row) => row.direction === "inbound");
+  assert.equal(inbound.length, 1, `${expected.label}: exactly one inbound message_log row`);
+  assert.equal(inbound[0].messageId, messageId, `${expected.label}: inbound row keyed by the WhatsApp message id`);
+  assert.equal(inbound[0].classification, expected.expectedClassification, `${expected.label}: inbound classification`);
+
+  // The outbound row proves which approved reply was selected. status is
+  // "failed" because no WhatsApp credentials are set in the test env — the
+  // selection is what is under test here, not delivery.
+  const outbound = rows.filter((row) => row.direction === "outbound");
+  assert.equal(outbound.length, 1, `${expected.label}: exactly one outbound reply attempt`);
+  assert.equal(outbound[0].text, expected.expectedReply, `${expected.label}: approved reply text`);
+  assert.equal(outbound[0].status, "failed", `${expected.label}: no reply is actually delivered in tests`);
+
+  const escalationRows = await db.select().from(escalations).where(eq(escalations.leadId, lead.leadId));
+  assert.equal(
+    escalationRows.length,
+    expected.expectsEscalation ? 1 : 0,
+    `${expected.label}: escalation row presence`,
+  );
+
+  await app.close();
+}
+
+// §17 row 1
+test("acceptance: appointment request creates an appointment_requested lead and asks for name/service/time", async () => {
+  await runAcceptanceCase({
+    label: "appointment_request",
+    text: "Hi, I want an appointment on Saturday",
+    expectedClassification: "appointment_request",
+    expectedReply: NON_ESCALATION_REPLIES.appointment_request,
+    expectedLeadStatus: "appointment_requested",
+    expectsEscalation: false,
+  });
+});
+
+// §17 row 2
+test("acceptance: consultation fee question replies with the approved published pricing text only", async () => {
+  await runAcceptanceCase({
+    label: "published_pricing",
+    text: "What is the consultation fee?",
+    expectedClassification: "published_pricing",
+    expectedReply: NON_ESCALATION_REPLIES.published_pricing,
+    expectedLeadStatus: "acknowledged",
+    expectsEscalation: false,
+  });
+});
+
+// §17 row 3
+test("acceptance: location/timings question replies only from approved location and hours", async () => {
+  await runAcceptanceCase({
+    label: "hours_location",
+    text: "Where are you located and what are your timings?",
+    expectedClassification: "hours_location",
+    expectedReply: NON_ESCALATION_REPLIES.hours_location,
+    expectedLeadStatus: "acknowledged",
+    expectsEscalation: false,
+  });
+});
+
+// §17 row 4
+test("acceptance: service question offers a consultation without claiming suitability or outcomes", async () => {
+  await runAcceptanceCase({
+    label: "service_information",
+    text: "Do you offer laser hair reduction?",
+    expectedClassification: "service_information",
+    expectedReply: NON_ESCALATION_REPLIES.service_information,
+    expectedLeadStatus: "acknowledged",
+    expectsEscalation: false,
+  });
+});
+
+// §17 row 5 — safety-critical
+test("acceptance: pregnancy-safety question escalates immediately and gives no medical advice", async () => {
+  await runAcceptanceCase({
+    label: "medical_or_urgent (pregnancy)",
+    text: "Can I use this treatment while pregnant?",
+    expectedClassification: "human_escalation",
+    expectedReply: ESCALATION_REPLIES.medicalOrUrgent,
+    expectedLeadStatus: "human_escalation",
+    expectsEscalation: true,
+  });
+});
+
+// §17 row 6 — safety-critical
+test("acceptance: post-treatment symptom escalates immediately and gives no diagnosis", async () => {
+  await runAcceptanceCase({
+    label: "medical_or_urgent (redness)",
+    text: "I got redness after treatment",
+    expectedClassification: "human_escalation",
+    expectedReply: ESCALATION_REPLIES.medicalOrUrgent,
+    expectedLeadStatus: "human_escalation",
+    expectsEscalation: true,
+  });
+});
+
+// §17 row 7
+test("acceptance: refund request escalates to staff with the approved complaint text", async () => {
+  await runAcceptanceCase({
+    label: "refund_dispute",
+    text: "I want a refund",
+    expectedClassification: "human_escalation",
+    expectedReply: ESCALATION_REPLIES.complaint,
+    expectedLeadStatus: "human_escalation",
+    expectsEscalation: true,
+  });
+});
+
+// §17 row 8
+test("acceptance: explicit human request hands off with the approved reception text", async () => {
+  await runAcceptanceCase({
+    label: "human_request",
+    text: "Talk to a person",
+    expectedClassification: "human_escalation",
+    expectedReply: ESCALATION_REPLIES.humanRequest,
+    expectedLeadStatus: "human_escalation",
+    expectsEscalation: true,
+  });
+});
+
+// §17 row 9 — STOP must opt the lead out and send NOTHING back.
+test("acceptance: STOP sets opted_out and sends no automated reply at all", async () => {
+  const app = buildApp();
+  const from = `9199${Math.floor(Math.random() * 1000000000).toString().padStart(9, "0")}`;
+  const messageId = `wamid.${randomUUID()}`;
+
+  const response = await postSignedWebhook(app, textMessagePayload(messageId, from, "STOP"));
+  assert.equal(response.statusCode, 200);
+
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  assert.equal(leadRows.length, 1, "STOP should still create/find the lead");
+  assert.equal(leadRows[0].optedOut, true, "STOP must persist opted_out = true");
+
+  const rows = await db.select().from(messageLog).where(eq(messageLog.leadId, leadRows[0].leadId));
+  assert.equal(rows.length, 1, "STOP stores the inbound message only");
+  assert.equal(rows[0].direction, "inbound");
+  assert.equal(rows[0].classification, null, "a STOP message is never classified");
+  assert.equal(
+    rows.filter((row) => row.direction === "outbound").length,
+    0,
+    "STOP must never produce an outbound reply",
+  );
+
+  const escalationRows = await db.select().from(escalations).where(eq(escalations.leadId, leadRows[0].leadId));
+  assert.equal(escalationRows.length, 0, "STOP must not create an escalation");
+
+  await app.close();
+});
+
+// §17 row 10 (duplicate delivery) is already covered above by the
+// "delivering the identical signed webhook twice" test — not repeated here.
