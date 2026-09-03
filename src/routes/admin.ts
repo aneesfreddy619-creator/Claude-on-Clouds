@@ -81,6 +81,44 @@ export function serializeError(error: unknown, depth = 3): SerializedError {
   return serialized;
 }
 
+export interface FlattenedErrorLogFields {
+  [key: string]: string | undefined;
+  error_name: string;
+  error_message: string;
+  error_code?: string;
+  cause_name?: string;
+  cause_message?: string;
+  cause_code?: string;
+}
+
+// Some structured-log viewers (observed on Railway) render a nested object
+// attribute by collapsing it down to just its own top-level .message,
+// discarding everything nested beneath it — even though the full detail
+// is present in the raw JSON line this app emits. Flattening every field
+// we care about to its own top-level key sidesteps that entirely: each
+// one becomes an independent, primitive-valued log attribute (error_name,
+// error_message, error_code, cause_name, cause_message, cause_code), which
+// every structured-log viewer displays directly, with nothing nested under
+// a single "error" object for a viewer to collapse. Only these six
+// structural fields are ever produced — never the query text, bound
+// parameters, DATABASE_URL, request headers, or any other secret.
+export function flattenErrorForLogging(error: unknown): FlattenedErrorLogFields {
+  const serialized = serializeError(error);
+
+  const fields: FlattenedErrorLogFields = {
+    error_name: serialized.name,
+    error_message: serialized.message,
+  };
+  if (serialized.code) fields.error_code = serialized.code;
+  if (serialized.cause) {
+    fields.cause_name = serialized.cause.name;
+    fields.cause_message = serialized.cause.message;
+    if (serialized.cause.code) fields.cause_code = serialized.cause.code;
+  }
+
+  return fields;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
@@ -300,7 +338,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           })
         );
       } catch (error) {
-        logger.error("admin_data_fetch_failed", { error: serializeError(error) });
+        logger.error("admin_data_fetch_failed", flattenErrorForLogging(error));
         return reply.status(500).send("Failed to load admin data");
       }
     }

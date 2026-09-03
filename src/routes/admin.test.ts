@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp } from "../app.js";
-import { serializeError } from "./admin.js";
+import { serializeError, flattenErrorForLogging } from "./admin.js";
 
 // Auth gating happens before any database access, so it is deterministic
 // without a live database. Successful-auth data rendering is NOT tested
@@ -104,4 +104,49 @@ test("serializeError handles a non-Error thrown value without crashing", () => {
   const result = serializeError("just a string");
   assert.equal(result.name, "UnknownError");
   assert.equal(result.message, "just a string");
+});
+
+// flattenErrorForLogging exists specifically because a nested "error"
+// object attribute was observed on Railway rendering as only its own
+// .message, hiding the .cause detail — see admin_data_fetch_failed. These
+// assert every field lands as its own TOP-LEVEL key, not nested under an
+// "error" (or any other) object.
+test("flattenErrorForLogging puts error_name/error_message at the top level for a plain error with no cause/code", () => {
+  const fields = flattenErrorForLogging(new Error("plain failure"));
+  assert.equal(fields.error_name, "Error");
+  assert.equal(fields.error_message, "plain failure");
+  assert.equal(fields.error_code, undefined);
+  assert.equal(fields.cause_name, undefined);
+  assert.equal(fields.cause_message, undefined);
+  assert.equal(fields.cause_code, undefined);
+  assert.equal((fields as { error?: unknown }).error, undefined, "must not also nest the fields under an 'error' key");
+});
+
+test("flattenErrorForLogging includes error_code at the top level when present", () => {
+  const error = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+  const fields = flattenErrorForLogging(error);
+  assert.equal(fields.error_code, "ECONNREFUSED");
+});
+
+test("flattenErrorForLogging exposes the Drizzle-wrapped driver cause as top-level cause_name/cause_message/cause_code", () => {
+  const driverError = Object.assign(new Error('relation "leads" does not exist'), {
+    name: "PostgresError",
+    code: "42P01",
+  });
+  const wrapperError = Object.assign(new Error('Failed query: select ... from "leads" ...\nparams: 50'), {
+    cause: driverError,
+  });
+
+  const fields = flattenErrorForLogging(wrapperError);
+  assert.equal(fields.error_name, "Error");
+  assert.match(fields.error_message, /Failed query/);
+  assert.equal(fields.cause_name, "PostgresError");
+  assert.equal(fields.cause_message, 'relation "leads" does not exist');
+  assert.equal(fields.cause_code, "42P01");
+});
+
+test("flattenErrorForLogging handles a non-Error thrown value without crashing", () => {
+  const fields = flattenErrorForLogging("just a string");
+  assert.equal(fields.error_name, "UnknownError");
+  assert.equal(fields.error_message, "just a string");
 });
