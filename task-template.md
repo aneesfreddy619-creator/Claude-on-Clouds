@@ -68,8 +68,28 @@ report — for scratch files and working notes.
 
 - Work on `main` only. Never create, switch, or merge branches.
 - **Never commit or push without explicit approval of the exact file set and
-  the exact commit message.**
+  the exact commit message.** This applies to **all** changes, documentation
+  included.
 - Run `npm run build` and the test suite before every commit.
+
+**Not adopted:** a relaxation allowing markdown-only changes to be committed
+and reported without pre-approval was proposed but never approved. Until the
+owner says otherwise, the full gate above applies to every file type. Any
+outside note describing that relaxation as active is wrong.
+
+## Division of labour
+
+- **Claude** — all code, tests, repository, Railway, Supabase, live
+  diagnosis, and execution of approved work.
+- **Perplexity** — vendor and API documentation research (Claude's sandbox
+  blocks `developers.facebook.com`), review of proposed plans and decisions,
+  product and scope judgement.
+- **Neither** re-derives state already recorded in the five project files.
+  Two systems reading the same file and agreeing is duplication, not
+  verification.
+- **Handoff format:** the decision or action only, in both directions. No
+  status recaps in prompts — state lives in the five files, never in pasted
+  text.
 
 ## Void versus failed
 
