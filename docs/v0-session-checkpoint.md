@@ -20,6 +20,14 @@ In precedence order:
 Note: the acceptance-test table moved from §15 to §17 in the 2026-09-03
 update of the product instructions. Cite §17.
 
+Related documents (neither overrides the five above):
+- `docs/v0-working-disciplines.md` — how work is done: change-control gates,
+  void-vs-failed runs, staleness intervals, module registry, test tiers.
+  **State lives here; method lives there.**
+- `whatsapp-front-desk-shell.md` — DRAFT spec for a reusable multi-business
+  shell. No authority over V0. Its name adoption and any restructure are
+  gated behind V0's first real end-to-end WhatsApp outcome.
+
 ## 2. Verified system sync state
 
 | System | State | Verdict |
