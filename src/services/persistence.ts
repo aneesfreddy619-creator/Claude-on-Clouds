@@ -153,7 +153,7 @@ export interface OptOutInput {
   inboundAt: Date;
 }
 
-// Records a STOP opt-out per v0-operational-clarifications.md Section 2:
+// Records a STOP opt-out per clinic-lead-desk-v0-product-instructions.md §23.2:
 // finds or creates the lead, sets opted_out = true, and updates
 // last_inbound_at/updated_at. Deliberately does NOT touch lead_status,
 // primary_category, or escalation_reason — a STOP message is never
@@ -213,7 +213,7 @@ export interface MessagePersistenceInput {
   leadId: string;
   text: string;
   // string for a normally classified message; null for a STOP message,
-  // which is never classified (v0-operational-clarifications.md Section 2).
+  // which is never classified (clinic-lead-desk-v0-product-instructions.md §23.2).
   classification: string | null;
   receivedAt: Date;
 }

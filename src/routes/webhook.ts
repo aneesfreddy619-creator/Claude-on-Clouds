@@ -122,7 +122,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         continue;
       }
 
-      // STOP opt-out (v0-operational-clarifications.md Section 2): checked
+      // STOP opt-out (clinic-lead-desk-v0-product-instructions.md §23.2): checked
       // before classification, since a STOP message must never be
       // classified, never get an approved reply selected, never be sent a
       // reply, and never create an escalation. Handled entirely in its own

@@ -7,8 +7,29 @@ Source of truth, in order:
 4. task-template.md
 5. project-description.md
 
-Live state: docs/v0-session-checkpoint.md. Working method: docs/v0-working-disciplines.md.
 Read state from those files rather than restating it. If memory and a file disagree, the file wins.
+
+## Five-file rule (project documentation only)
+
+**The project's standing documentation is exactly these five files. Never
+create a sixth.** All future project updates accumulate into them.
+
+This governs **project documentation only**. It is not a limit on the
+repository. Application code, tests, configuration, database material,
+deployment files, and `README.md` (developer documentation — install, run,
+test, deploy) are separate and unaffected.
+
+Working documents — status notes, checkpoints, plans, upgrade specs — may be
+drafted freely, but their durable content is absorbed into the five and the
+working document is then deleted. Never kept as stock.
+
+Where things live:
+- Product, safety, approved knowledge, acceptance tests (§17), definition of done (§19), operational clarifications (§23) → clinic-lead-desk-v0-product-instructions.md
+- Scope, status, blocker, behavioural rules → project-instructions.md
+- Stack, checkpoint, coverage registry, test tiers, staleness, gated shell decisions → v0-implementation-decisions.md
+- Task framing, change-control gates, void-vs-failed, commit discipline → task-template.md
+- Project summary and future direction → project-description.md
+- Install, run, test, deploy commands → README.md (not a project document)
 
 ## Current status
 
@@ -40,8 +61,8 @@ deterministic and rule-based. All outbound text is pre-approved and selected, ne
 
 ## Future shell (approved as spec only)
 
-whatsapp-front-desk-shell.md — reusable multi-business, rule-based front-desk / case-intake
-shell. DRAFT, no authority over V0.
+A reusable multi-business, rule-based front-desk / case-intake shell. Decisions are recorded in
+v0-implementation-decisions.md ("Future shell decisions — gated, not active"). No authority over V0.
 Gated until V0's first real end-to-end WhatsApp outcome: adopting the "WhatsApp Front-Desk Shell"
 name, any knowledge restructure, and all code or schema changes.
 Where the shell and the clinic instructions conflict, the clinic instructions win.
