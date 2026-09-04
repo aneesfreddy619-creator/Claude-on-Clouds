@@ -1,66 +1,69 @@
 # Project Instructions
 
-Use `clinic-lead-desk-v0-product-instructions.md` as the main source of truth.
+Source of truth, in order:
+1. clinic-lead-desk-v0-product-instructions.md (acceptance tests = §17; definition of done = §19)
+2. project-instructions.md
+3. v0-implementation-decisions.md
+4. task-template.md
+5. project-description.md
+
+Live state: docs/v0-session-checkpoint.md. Working method: docs/v0-working-disciplines.md.
+Read state from those files rather than restating it. If memory and a file disagree, the file wins.
+
+## Current status
+
+Backend complete and green: 47 automated tests passing, build clean, deployed on Railway from main,
+/health and /admin working, all four WhatsApp env vars set.
+V0 is NOT done. §19 requires a real WhatsApp message producing an approved reply observed in WhatsApp.
+
+## Open blocker
+
+Real inbound messages never reach Railway — confirmed via Railway logs, Supabase rows, and
+message-ID search. Meta's own sample webhook DID arrive and ran the full pipeline correctly.
+Leading hypothesis, unproven: the WABA is not subscribed to the Meta app.
+Next action, read-only: GET /{WABA_ID}/subscribed_apps in Graph API Explorer
+(requires whatsapp_business_management).
+Do not propose backend code fixes for this — no backend code path ever executed.
 
 ## Scope lock
 
-Before starting any task, first check whether it is inside locked V0 scope.
+Allowed: webhook, capture and storage, rule-based replies, escalation, audit logging,
+admin inspection, deployment for the Meta test number, acceptance testing.
+Not allowed: sales collateral, ad copy, presentations, production expansion, real-clinic
+onboarding, extra channels, n8n/Make/Pipedream, payments, marketing or broadcast messaging.
 
-### Allowed now
-- WhatsApp webhook setup.
-- Lead capture and storage.
-- Rule-based reply flow.
-- Human escalation.
-- Audit logging.
-- Admin inspection.
-- Deployment steps needed to test V0 on the Meta test number.
-- Acceptance testing.
+## No AI, permanently
 
-### Not allowed now
-- Sales collateral.
-- Ad copy.
-- Promotional email sequences.
-- Presentations.
-- Production expansion.
-- Real-clinic onboarding.
-- Extra channels or integrations outside the V0 spec.
-- n8n, Make, Pipedream, or any workflow tooling in the current milestone.
-- Model-layer classification or extraction in the current milestone.
+No LLM, model layer, AI classification or extraction, RAG, embeddings, or multi-model
+orchestration — not in V0 and not in the future shell direction. Classification stays
+deterministic and rule-based. All outbound text is pre-approved and selected, never composed.
 
-## Current checkpoint
+## Future shell (approved as spec only)
 
-Treat the following as the current project state unless explicitly updated:
-- Meta sandbox setup has already been validated.
-- Meta test number and approved recipient testing have succeeded.
-- Inbound webhook payload has already been observed in Meta test webhooks.
-- Railway production secret values are not yet fully entered.
-- Backend webhook ingestion, persistence, reply flow, and admin verification are the next milestone.
+whatsapp-front-desk-shell.md — reusable multi-business, rule-based front-desk / case-intake
+shell. DRAFT, no authority over V0.
+Gated until V0's first real end-to-end WhatsApp outcome: adopting the "WhatsApp Front-Desk Shell"
+name, any knowledge restructure, and all code or schema changes.
+Where the shell and the clinic instructions conflict, the clinic instructions win.
 
 ## Working rules
 
-- Rules first.
-- Approved knowledge second.
-- Human handoff whenever uncertain.
-- Prefer deterministic, rule-based handling only in the current V0 milestone.
-
-## Required behaviour
-
-- Stay within the fictional clinic setup and demo scope.
-- Use only approved administrative responses and approved knowledge.
-- Use implementation-oriented outputs: architecture, schema, endpoints, workflows, validation logic, test cases, admin tools, and deployment steps.
-- Keep secrets in environment variables only.
-- Include webhook verification, signature verification, duplicate protection, structured logs, and admin inspection capability.
-- Reflect the current checkpoint state rather than restarting Meta setup from scratch.
-- Flag missing requirements explicitly instead of inventing them.
+Rules first. Approved knowledge second. Human handoff whenever uncertain.
+Work on main only; never create, switch, or merge branches.
+Never commit or push without explicit approval of the exact file set and exact commit message.
+Never print, request, or infer secret values — variable names and present/absent only.
+Flag missing requirements explicitly instead of inventing them.
 
 ## Never do
 
-- Invent clinic facts, prices, services, addresses, doctors, policies, discounts, or availability.
-- Provide medical advice, diagnosis, treatment recommendations, emergency judgment, pregnancy suitability guidance, or report interpretation.
-- Confirm appointments independently.
-- Request or store detailed health history, reports, photos, prescriptions, ID documents, or payment data unless the main spec explicitly allows it.
-- Treat V0 as production-ready.
+Invent clinic facts, prices, services, addresses, doctors, policies, discounts, or availability.
+Give medical advice, diagnosis, treatment recommendation, emergency judgement, pregnancy
+suitability guidance, or report interpretation.
+Confirm appointments independently.
+Store health history, reports, photos, prescriptions, ID documents, or payment data.
+Treat V0 as production-ready.
 
 ## Delivery rule
 
-If a request falls outside locked V0 scope, label it clearly as later phase and do not let it change the current build plan.
+If a request falls outside locked V0 scope, label it later phase and do not let it change
+the current build plan.
