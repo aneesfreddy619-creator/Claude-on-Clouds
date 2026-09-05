@@ -44,34 +44,64 @@ in production. All Railway variables present:
 `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
 `ADMIN_BASIC_AUTH_USER`, `ADMIN_BASIC_AUTH_PASSWORD`.
 
-**Proven live once:** Meta's own sample webhook event arrived and ran the
-full pipeline correctly — signature verified, deduplicated, classified, lead
-created, message logged, escalation created, outbound send attempted. That
-send returned a real Graph API error (`#131030 recipient not in allowed
-list`, expected for Meta's fake sample sender), which proves the access
-token and phone number ID authenticate correctly.
+**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 10
+of 10. Nine rows were proven live against the Meta test number, each
+verified in Railway logs; row 10 is unit-proven only.
 
-**Open blocker:** real inbound messages from the approved test recipient
-never reach the backend. Confirmed at three independent layers — Railway
-logs, Supabase rows, and direct message-ID search — all empty. Meta retries
-undeliverable webhooks for up to 7 days; no retry traffic was ever observed,
-so Meta is not failing to deliver, it is never dispatching. The gap is
-upstream of the backend, so no backend code path is responsible.
+| # | Message sent | Category / escalation reason | Observed result |
+|---|---|---|---|
+| 1 | appointment on Saturday | `appointment_request` | reply sent, marked **read** in WhatsApp |
+| 2 | consultation fee? | `published_pricing` | ₹800 approved reply sent |
+| 3 | located / timings? | `hours_location` | approved reply sent |
+| 4 | laser hair reduction? | `service_information` | approved reply sent |
+| 5 | while pregnant? | `human_escalation` / `medical_or_urgent` | escalation row created; escalation reply sent |
+| 6 | redness after treatment | `human_escalation` / `medical_or_urgent` | escalation row created; escalation reply sent |
+| 7 | I want a refund | `human_escalation` / `refund_dispute` | escalation row created; escalation reply sent |
+| 8 | Talk to a person | `human_escalation` / `human_request` | escalation row created; escalation reply sent |
+| 9 | "Stop" (capital S) | STOP match, case-insensitive | `opted_out = true`; no classification, no escalation, **no reply** |
+| 10 | duplicate webhook delivery | — | **unit-proven only** in `webhook.persistence.test.ts` against a real database. Not live-triggerable: Meta will not redeliver a `wamid` on demand. |
 
-**Leading hypothesis, unproven:** the WhatsApp Business Account is not
-subscribed to the Meta app. This would explain why the dashboard test button
-works (it bypasses the WABA subscription) while real messages never dispatch.
+**What this run does not prove.** All ten messages came from the single
+approved test recipient, whose lead was already in `human_escalation` from
+row 1's follow-ups. Per §23.5 an escalated lead's status is never
+downgraded, so rows 2–4 could not move it to `acknowledged` or
+`appointment_requested`. That is correct behaviour, but it means live
+evidence for those status transitions does not exist — they remain covered
+by automated tests only.
 
-**Next action, read-only:** `GET /{WABA_ID}/subscribed_apps` in Graph API
-Explorer (requires `whatsapp_business_management`). Empty `data` confirms the
-hypothesis.
+**Root cause of the long-running blocker: the Meta app was unpublished.**
+Meta does not dispatch production webhook data to apps in Development mode;
+only dashboard-generated test events. This explains every observation:
+the `GET` verification handshake succeeded (not production data), Meta's own
+sample webhook arrived and ran the entire pipeline correctly, real messages
+never arrived, and zero retry traffic was ever seen despite Meta retrying
+undeliverable webhooks for up to seven days — nothing was ever dispatched to
+fail. No backend code path was ever responsible.
 
-**Manual Meta checks, if that is not conclusive:**
-1. WhatsApp → Configuration → Callback URL reads exactly the deployed `/webhook` URL
-2. Same screen → Webhook fields → `messages` subscribed *there*
-3. App-level Webhooks page shows no conflicting callback URL
-4. Phone Number ID matches `WHATSAPP_PHONE_NUMBER_ID`
-5. WABA is not in a pending or restricted state
+**Fixed by** adding `PRIVACY.md` at the repository root (commit `b9d3938`)
+to supply the Privacy Policy URL that was the only blocker on Meta's Publish
+screen, then switching the app Development → Live. Neither App Review nor
+Business Verification was required; secondary sources routinely conflate
+those three, and they are distinct.
+
+**Disproved hypothesis — do not re-run.** An earlier high-confidence
+hypothesis held that the WhatsApp Business Account was not subscribed to the
+Meta app. `GET /{WABA_ID}/subscribed_apps` returned the app, disproving it.
+The five manual Meta configuration checks that hung off that hypothesis
+(callback URL, `messages` field subscription, conflicting app-level webhook,
+phone number ID, WABA state) were all verified correct and are a dead end.
+
+**Secondary issue, resolved:** immediately after publishing, outbound replies
+failed with Meta error `190` (`401 Authentication Error`) — the temporary
+developer access token had expired. Refreshing `WHATSAPP_ACCESS_TOKEN` in
+Railway restored sending. Temporary tokens expire on a fixed cycle, so this
+recurs; a permanent System User token is the durable fix and is not yet
+applied.
+
+**Live state left behind:** the test recipient's lead carries
+`opted_out = true` from row 9 and will receive no further automated replies
+until that flag is cleared, which is a deliberate database change and is not
+yet approved.
 
 **Known infrastructure gotcha:** `DATABASE_URL` must use the Supabase IPv4
 **session pooler** (`aws-0-<region>.pooler.supabase.com:5432`). The direct
@@ -111,7 +141,7 @@ Read from source, never asserted from memory.
 | `rules/appointmentDetailExtraction.ts` | **Partial** | no dedicated tests; exercised indirectly |
 | `routes/admin.ts` | Complete | `admin.test.ts` (13) |
 | `routes/health.ts` | Complete | verified live via Railway healthcheck |
-| `services/whatsappSender.ts` | **Partial** | fail-closed proven; success path never exercised live |
+| `services/whatsappSender.ts` | Complete | fail-closed proven by tests; success path proven live nine times on 2026-09-05 |
 | `config/env.ts` | Complete | no validation by design; presence logged at boot |
 | `whatsapp/inboundPayload.ts` | Complete | via webhook tests |
 
@@ -128,11 +158,12 @@ claims about coverage that does not exist.
 | 1 — Accuracy | Approved reply text exact; correct category and escalation reason |
 | 2 — Application | Right rule applied; lead status; persistence |
 | 3 — Edge and failure | Unmatched input escalates; unreachable DB fails closed; bad signature rejected |
-| 4 — Conversational | **Not covered.** Requires live WhatsApp. |
+| 4 — Conversational | **Not covered by automated tests.** Proven once live on 2026-09-05 (nine §17 rows end to end). |
 
 A passing result validates what it tested, at the version it tested, within
-the coverage it had. **47/47 green does not satisfy Section 19.** Any change
-to rules or approved content re-runs tier 1 in full before it is trusted.
+the coverage it had. **47/47 green does not by itself satisfy Section 19** —
+Section 19 was satisfied by the live run, not by the suite. Any change to
+rules or approved content re-runs tier 1 in full before it is trusted.
 
 ## Staleness and review intervals
 
@@ -160,10 +191,12 @@ A reusable multi-business WhatsApp front-desk / case-intake shell is an
 approved future direction. **No LLM or AI, ever** — deterministic rule-based
 classification, approved content packs, and human escalation when uncertain.
 
-Gated until Clinic Lead Desk V0 achieves its first real end-to-end WhatsApp
-outcome (Section 19): adopting the name **WhatsApp Front-Desk Shell**, any
-knowledge restructure, and all code or schema changes. Until then these are
-decisions on paper only, and the clinic instructions win any conflict.
+The gate was Clinic Lead Desk V0 achieving its first real end-to-end
+WhatsApp outcome (Section 19). That happened on 2026-09-05, so the gate is
+**met**. Nothing is thereby adopted: the name **WhatsApp Front-Desk Shell**,
+any knowledge restructure, and all code or schema changes are now unblocked
+but each still requires its own explicit approval. Until one is given these
+remain decisions on paper only, and the clinic instructions win any conflict.
 
 **Key finding that makes this viable:** the engine is already generic.
 Transport, matching, persistence, opt-out, and admin layers contain no

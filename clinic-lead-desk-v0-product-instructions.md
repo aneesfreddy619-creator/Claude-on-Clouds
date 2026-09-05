@@ -56,8 +56,11 @@ Current checkpoint for this workspace:
 - Outbound Meta test-template send has been validated.
 - Backend is complete, tested, and deployed: webhook verification, signature verification, deduplication, rule-based classification, approved replies, lead/message/escalation persistence, STOP handling, and protected admin inspection.
 - All Railway environment variables are entered; `GET /health` and `/admin` work in production.
-- **Open blocker:** real inbound WhatsApp messages do not reach the backend. Meta's own sample webhook does arrive and runs the full pipeline correctly, so the gap is upstream of the backend.
-- V0 is therefore **not** done: Section 19 still requires a real message producing an approved reply observed in WhatsApp.
+- The Meta app was **published (Live) on 2026-09-05**, which was the final blocker: Meta does not dispatch production webhook data to unpublished apps, only dashboard test events.
+- **Section 17 acceptance tests: 10 of 10 pass.** Nine proven live end-to-end against the Meta test number on 2026-09-05; row 10 (duplicate webhook) proven against a real database in `src/routes/webhook.persistence.test.ts` and not live-triggerable, since Meta will not redeliver a `wamid` on demand.
+- **Section 19 Definition of done: satisfied.** A real WhatsApp message produced an approved reply observed in WhatsApp, with Meta status webhooks confirming `sent` then `read`.
+
+**V0 is complete.**
 
 Treat this as the current state unless explicitly updated. Detailed
 implementation state, coverage, and diagnosis live in
