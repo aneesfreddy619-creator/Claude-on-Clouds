@@ -101,14 +101,17 @@ ready for it.
 
 - All secrets (WhatsApp tokens, verify token, admin credentials, database URL)
   come from environment variables only — never hardcode them.
-- `GET /webhook` verification, `POST /webhook` signature verification,
-  duplicate protection, rule-based classification, approved-reply
-  selection, lead/inbound-message persistence, and sending the approved
-  reply back through the WhatsApp Cloud API are implemented. Creating
-  `escalations` rows, wiring `/admin` to real data, appointment detail
-  collection, and STOP/opt-out handling are not yet implemented — see the
-  `TODO` comments in `src/routes/webhook.ts` and
-  `v0-implementation-decisions.md`.
+- The webhook pipeline is complete: `GET /webhook` verification,
+  `POST /webhook` signature verification over the raw body, duplicate
+  protection by WhatsApp message ID, rule-based classification,
+  approved-reply selection, lead/message/escalation persistence,
+  appointment-detail extraction, STOP/opt-out handling, sending the
+  approved reply through the WhatsApp Cloud API, and protected admin
+  inspection with test-lead deletion.
+- **This file does not track project status.** For what is built, proven,
+  and outstanding, read the five project documents — start with
+  `project-instructions.md`. Keeping a second copy of status here is how
+  the two come to disagree.
 - `src/routes/webhook.ts` is orchestration only. Signature verification
   lives in `src/security/`, dedupe and persistence in `src/services/`,
   payload parsing in `src/whatsapp/`, and classification/reply selection in

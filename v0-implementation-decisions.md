@@ -21,6 +21,31 @@ safety rules, approved knowledge, or acceptance criteria.
 - **Model layer: none, permanently** — no LLM, AI classification or extraction, RAG, embeddings, or multi-model orchestration, in V0 or in the future shell direction
 - WhatsApp path: Meta WhatsApp Cloud API test number only
 
+## Infrastructure identifiers
+
+Identifiers only — never tokens, passwords, or connection strings. Recorded
+so sessions stop re-deriving them.
+
+| Resource | Identifier |
+|---|---|
+| Railway project | `capable-delight` / `f7f61cf1-dd49-431d-ac5c-73af75beb2f4` |
+| Railway service | `Claude-on-Clouds` / `ac9aff39-6c11-4f95-a4f5-372849a6653e` |
+| Railway environment | `production` / `e7f033ee-44fb-442b-a777-1006d8287049` |
+| Supabase project | ref `ewxajlygruucyqbowyev`, region `ap-south-1` |
+| Deployed URL | `https://claude-on-clouds-production.up.railway.app` |
+| WABA ID | `1579901163932761` — **unverified**, see below |
+
+The Railway and Supabase rows were verified read-only against the live
+APIs on 2026-09-05. The WABA ID is carried from session record and has not
+been re-verified, because `developers.facebook.com` is blocked from the
+Claude sandbox; confirm it in the Meta console before relying on it.
+
+**Trap — the database host reported by the Supabase API is the wrong one.**
+`list_projects` reports the host as `db.ewxajlygruucyqbowyev.supabase.co`.
+That is the IPv6-only direct host that caused the `/admin` 500. Copying it
+from an API response reintroduces the bug. Use the IPv4 session pooler, per
+the warning under Current checkpoint.
+
 ## Locked build rules
 
 Rules first. Approved knowledge second. Human handoff whenever uncertain.

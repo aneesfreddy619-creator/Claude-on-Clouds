@@ -256,12 +256,6 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    // TODO (admin inspection wiring): src/routes/admin.ts is still a
-    // placeholder — once leads/message_log have real rows (as of this
-    // step), wire it to list/filter leads, message history, and
-    // escalations, per Section 13 "Simple admin page or API endpoint".
-
-
     return reply.status(200).send({ received: true });
   });
 }
