@@ -80,10 +80,21 @@ outside note describing that relaxation as active is wrong.
 ## Division of labour
 
 - **Claude** — all code, tests, repository, Railway, Supabase, live
-  diagnosis, and execution of approved work.
-- **Perplexity** — vendor and API documentation research (Claude's sandbox
-  blocks `developers.facebook.com`), review of proposed plans and decisions,
-  product and scope judgement.
+  diagnosis, and execution of approved work. The only party that changes
+  anything.
+- **Gemini — read-only second opinion.** Replaces Perplexity, which is
+  retired from this project. It may hold GitHub read access. It holds
+  **zero authority** and cannot run code, execute tests, query the
+  database, or verify any claim it makes. Use it to challenge design
+  logic, spot edge cases, and pressure-test architecture *before* a change
+  is applied.
+- **Never accept code from a second opinion.** It has not seen this
+  repository's stack and will produce plausible code for the wrong one.
+  Take the reasoning; discard the implementation.
+- **Every second-opinion claim is checked against the source before it is
+  acted on.** Both second opinions used on this project have been
+  confidently and specifically wrong about things they could not see. A
+  claim with no evidence behind it is a question, not a finding.
 - **Neither** re-derives state already recorded in the five project files.
   Two systems reading the same file and agreeing is duplication, not
   verification.

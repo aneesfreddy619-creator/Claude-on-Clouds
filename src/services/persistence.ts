@@ -158,7 +158,8 @@ export interface OptOutInput {
 // last_inbound_at/updated_at. Deliberately does NOT touch lead_status,
 // primary_category, or escalation_reason — a STOP message is never
 // classified, so there is nothing to record for those fields. Only a
-// human staff action may clear opted_out; nothing in this codebase does.
+// human staff action may clear opted_out — see clearLeadOptOut below,
+// reachable only from the protected admin route, never from this pipeline.
 export async function recordOptOut(input: OptOutInput): Promise<string | null> {
   try {
     const existing = await db.select({ leadId: leads.leadId }).from(leads).where(eq(leads.whatsappPhone, input.whatsappPhone)).limit(1);
@@ -343,6 +344,40 @@ export async function deleteLeadAndHistory(leadId: string): Promise<boolean> {
     return true;
   } catch (error) {
     logger.error("admin_lead_deletion_failed", {
+      leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+// Clears opted_out on one lead, so a test number that sent STOP can be
+// used again. Deliberately a *staff action only*: it is called from the
+// admin route and from nowhere else. Nothing in the message pipeline may
+// call it — an opt-out is only ever reversed by a person acting on a
+// request, never by an inbound message. See
+// clinic-lead-desk-v0-product-instructions.md §23.2.
+//
+// Only opted_out and updated_at change. Lead status, escalations, and
+// message history are all left exactly as they are: opting back in is
+// not a reset of the case.
+export async function clearLeadOptOut(leadId: string): Promise<boolean> {
+  try {
+    const updated = await db
+      .update(leads)
+      .set({ optedOut: false, updatedAt: new Date() })
+      .where(eq(leads.leadId, leadId))
+      .returning({ leadId: leads.leadId });
+
+    if (updated.length === 0) {
+      logger.warn("admin_lead_opt_out_clear_no_match", { leadId });
+      return false;
+    }
+
+    logger.info("admin_lead_opt_out_cleared", { leadId });
+    return true;
+  } catch (error) {
+    logger.error("admin_lead_opt_out_clear_failed", {
       leadId,
       error: error instanceof Error ? error.message : String(error),
     });

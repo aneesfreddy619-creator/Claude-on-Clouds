@@ -60,8 +60,8 @@ migrations, `GET /webhook` verification, `POST /webhook` signature
 verification over the raw body, deduplication by WhatsApp message ID,
 rule-based classification, approved reply selection, lead and message
 persistence, escalation row creation, STOP/opt-out handling, outbound send
-function, protected admin inspection with test-lead deletion, and
-appointment-detail extraction.
+function, protected admin inspection with test-lead deletion and opt-out
+reversal, and appointment-detail extraction.
 
 Deployed on Railway from `main`. `GET /health` and `/admin` both return 200
 in production. All Railway variables present:
@@ -124,9 +124,11 @@ recurs; a permanent System User token is the durable fix and is not yet
 applied.
 
 **Live state left behind:** the test recipient's lead carries
-`opted_out = true` from row 9 and will receive no further automated replies
-until that flag is cleared, which is a deliberate database change and is not
-yet approved.
+`opted_out = true` from row 9 and receives no further automated replies
+until that flag is cleared. Since 2026-09-07 this is a one-click staff
+action on the admin page ("Clear opt-out", shown only on opted-out rows) —
+see "Admin opt-out reversal" below. Doing it is still a deliberate choice,
+not something the system ever does by itself.
 
 **Known infrastructure gotcha:** `DATABASE_URL` must use the Supabase IPv4
 **session pooler** (`aws-0-<region>.pooler.supabase.com:5432`). The direct
@@ -156,21 +158,21 @@ Read from source, never asserted from memory.
 
 | Module | Status | Coverage |
 |---|---|---|
-| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (12) |
+| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (14) |
 | `security/webhookSignature.ts` | Complete | missing and invalid signature both rejected |
 | `services/dedupe.ts` | Complete | `dedupe.test.ts` (1) + duplicate-delivery case |
-| `services/persistence.ts` | Complete | `persistence.test.ts` (6) + acceptance cases |
+| `services/persistence.ts` | Complete | `persistence.test.ts` (6) + acceptance cases + `clearLeadOptOut` proven against a real database |
 | `rules/classifier.ts` | Complete | `classifier.test.ts` (4) + 8 acceptance cases |
 | `rules/approvedReplies.ts` | Complete | `approvedReplies.test.ts` (5) + reply-text assertions |
 | `rules/stopDetection.ts` | Complete | `stopDetection.test.ts` (2) + STOP acceptance case |
 | `rules/appointmentDetailExtraction.ts` | **Partial** | no dedicated tests; exercised indirectly |
-| `routes/admin.ts` | Complete | `admin.test.ts` (13) |
+| `routes/admin.ts` | Complete | `admin.test.ts` (16) — includes opt-in route auth and UUID guards |
 | `routes/health.ts` | Complete | verified live via Railway healthcheck |
 | `services/whatsappSender.ts` | Complete | fail-closed proven by tests; success path proven live nine times on 2026-09-05 |
 | `config/env.ts` | Complete | no validation by design; presence logged at boot |
 | `whatsapp/inboundPayload.ts` | Complete | via webhook tests |
 
-**Totals:** 47 tests across 8 files, all passing.
+**Totals:** 52 tests across 8 files, all passing.
 
 **Maintenance rule:** update this table in the same change that alters a
 module, or do not keep it. An unmaintained registry produces confident
@@ -209,6 +211,48 @@ everywhere else. Tests assert against the exported constants and never
 restate approved text. Restating a value in a second location is how a
 knowledge base comes to contradict itself, and the contradiction always
 surfaces later than it was created.
+
+## Engine scaling and architecture findings
+
+Recorded 2026-09-07 after a second-opinion review, each verified against
+the source before being written here.
+
+**1. Tenant partitioning — required before a second business.** Opt-out
+(`leads.whatsapp_phone`) and deduplication (`message_log.message_id`) key
+on the value alone, with no tenant dimension. Correct for one business.
+The moment a second exists on the same engine, a person opting out of
+business A would be silently suppressed for business B, and classifier
+keyword tables would collide across domains ("book" means an appointment
+to a clinic and a purchase to a bookshop). Both must key on
+`[tenant_id, …]`, and keyword tables must move into per-tenant content.
+**Recorded as a requirement. Not built — there is no tenant concept today.**
+
+**2. Selected, never composed.** Two sources compose the **decision** of
+which pre-approved reply to send. The **text itself is never composed,
+concatenated, templated, or generated** — it is selected whole from
+approved content. Stated precisely because loose wording ("composed to
+form the answer") could mislead a future session into building string
+assembly, which would break the no-AI guarantee just as surely as a model
+would.
+
+**3. "Pre-send validator", not "supervisor layer".** The component that
+checks a selected reply against live state is a **pre-send validator**.
+"Supervisor" is deprecated: it implies catching non-deterministic model
+output, which does not exist here. This validator checks a selection
+against state the classifier never saw — is the recipient opted out, has a
+human taken over, is the content past its review interval, does the
+selected reply exist in the pack. One already runs at
+`src/routes/webhook.ts` (the `lead.optedOut` check between reply selection
+and send).
+
+**4. Admin opt-out reversal — built 2026-09-07.** `clearLeadOptOut` in
+`services/persistence.ts`, reachable only from
+`POST /admin/leads/:leadId/opt-in` behind the same Basic Auth and UUID
+guard as lead deletion. It clears `opted_out` and nothing else: lead
+status, category, escalation reason, and escalation rows all survive,
+because opting back in is not a reset of the case. **Nothing in the
+message pipeline may call it** — an opt-out is reversed only by a person
+acting on a request.
 
 ## Future shell decisions — gated, not active
 

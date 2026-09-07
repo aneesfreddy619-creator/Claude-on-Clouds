@@ -37,6 +37,7 @@ const { messageLog } = await import("../db/schema/messageLog.js");
 const { escalations } = await import("../db/schema/escalations.js");
 const { NON_ESCALATION_REPLIES, ESCALATION_REPLIES } = await import("../rules/approvedReplies.js");
 const { eq } = await import("drizzle-orm");
+const { clearLeadOptOut } = await import("../services/persistence.js");
 
 const APP_SECRET = "test-app-secret";
 
@@ -357,3 +358,45 @@ test("acceptance: STOP sets opted_out and sends no automated reply at all", asyn
 
 // §17 row 10 (duplicate delivery) is already covered above by the
 // "delivering the identical signed webhook twice" test — not repeated here.
+
+// clearLeadOptOut: the only path anywhere that reverses an opt-out, and it
+// is reachable only from the protected admin route. Proven here against a
+// real database rather than only through the route's auth guard, because
+// what matters is that the flag actually flips and that nothing else on
+// the lead is disturbed.
+test("acceptance: clearLeadOptOut reverses a STOP opt-out without resetting the case", async () => {
+  const app = buildApp();
+  const from = `9199902${Math.floor(Math.random() * 100000)}`;
+
+  // Escalate first, so the lead carries real state we can prove survives.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Talk to a person"));
+  // Then opt out.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "STOP"));
+
+  const beforeRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  assert.equal(beforeRows.length, 1);
+  const before = beforeRows[0];
+  assert.equal(before.optedOut, true, "STOP should have set opted_out");
+
+  const cleared = await clearLeadOptOut(before.leadId);
+  assert.equal(cleared, true);
+
+  const afterRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  const after = afterRows[0];
+  assert.equal(after.optedOut, false, "opt-out should be cleared");
+
+  // Opting back in is not a reset of the case: everything else is untouched.
+  assert.equal(after.leadStatus, before.leadStatus);
+  assert.equal(after.primaryCategory, before.primaryCategory);
+  assert.equal(after.escalationReason, before.escalationReason);
+
+  const escalationRows = await db.select().from(escalations).where(eq(escalations.leadId, before.leadId));
+  assert.equal(escalationRows.length, 1, "the escalation must survive opting back in");
+
+  await app.close();
+});
+
+test("acceptance: clearLeadOptOut returns false for a lead that does not exist", async () => {
+  const cleared = await clearLeadOptOut("00000000-0000-0000-0000-000000000000");
+  assert.equal(cleared, false);
+});

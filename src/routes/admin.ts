@@ -7,7 +7,7 @@ import { db } from "../db/client.js";
 import { leads } from "../db/schema/leads.js";
 import { messageLog } from "../db/schema/messageLog.js";
 import { escalations } from "../db/schema/escalations.js";
-import { deleteLeadAndHistory } from "../services/persistence.js";
+import { clearLeadOptOut, deleteLeadAndHistory } from "../services/persistence.js";
 
 // Admin inspection page for Clinic Lead Desk V0 (Section 13 "Simple admin
 // page or API endpoint"). Read-only except for one action: deleting a test
@@ -200,6 +200,13 @@ function renderAdminPage(data: {
           <form method="POST" action="/admin/leads/${encodeURIComponent(lead.leadId)}/delete" style="margin:0;" onsubmit="return confirm('Delete this test lead and all its messages/escalations? This cannot be undone.');">
             <button type="submit">Delete</button>
           </form>
+          ${
+            lead.optedOut
+              ? `<form method="POST" action="/admin/leads/${encodeURIComponent(lead.leadId)}/opt-in" style="margin:0;" onsubmit="return confirm('Clear this lead&apos;s opt-out? Only do this if the person has asked to receive messages again.');">
+            <button type="submit">Clear opt-out</button>
+          </form>`
+              : ""
+          }
         </td>
       </tr>`
     )
@@ -361,5 +368,26 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
     const success = await deleteLeadAndHistory(leadId);
     return reply.redirect(success ? "/admin?deleted=1" : "/admin?error=delete_failed");
+  });
+
+  // Clears a lead's opt-out so a test number that sent STOP can be used
+  // again. Same fail-closed Basic Auth and UUID guard as the delete route
+  // above. This is the only path that clears opted_out anywhere in the
+  // codebase — the inbound message pipeline never does (see
+  // clearLeadOptOut's comment in src/services/persistence.ts).
+  app.post("/admin/leads/:leadId/opt-in", async (request: FastifyRequest<{ Params: { leadId: string } }>, reply: FastifyReply) => {
+    if (!isAuthorized(request)) {
+      logger.warn("admin_access_denied", { ip: request.ip });
+      return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
+    }
+
+    const { leadId } = request.params;
+    if (!UUID_PATTERN.test(leadId)) {
+      logger.warn("admin_lead_opt_out_clear_rejected", { leadId, reason: "invalid_lead_id" });
+      return reply.redirect("/admin?error=invalid_lead_id");
+    }
+
+    const success = await clearLeadOptOut(leadId);
+    return reply.redirect(success ? "/admin?opted_in=1" : "/admin?error=opt_in_failed");
   });
 }
