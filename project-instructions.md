@@ -93,6 +93,33 @@ Never commit or push without explicit approval of the exact file set and exact c
 Never print, request, or infer secret values — variable names and present/absent only.
 Flag missing requirements explicitly instead of inventing them.
 
+## Shared Source of Truth Protocol
+
+Canonical sources:
+- GitHub `main` = current code and durable project documentation
+- Supabase = current database/schema/data truth
+- Railway = current deployment/runtime truth
+
+Before any implementation-affecting conclusion:
+- refresh the relevant current source directly;
+- do not rely on prior chat summaries, remembered line numbers, or another agent's paraphrase when source is available.
+
+Claude and GPT-5.6 Sol must reason independently from the same current authoritative sources.
+
+Claude:
+- implementation owner;
+- verify GPT findings against current source before acting;
+- use compact milestone plans and reports;
+- stop after push for independent review.
+
+GPT-5.6 Sol:
+- architecture/verifier role;
+- inspect current GitHub/Supabase/Railway state directly;
+- do not treat Claude's report as verification;
+- review the actual commit SHA after push.
+
+Agreement between agents is not verification by itself.
+
 ## Never do
 
 Invent clinic facts, prices, services, addresses, doctors, policies, discounts, or availability.
