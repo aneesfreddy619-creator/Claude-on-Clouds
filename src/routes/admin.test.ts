@@ -251,7 +251,7 @@ test("resolve with another escalation still open says replies remain held", () =
   assert.match(message?.text ?? "", /Another escalation is still open/);
 });
 
-test("resolve of the last escalation on an escalated lead reports that replies resumed", () => {
+test("resolve of the last escalation on an escalated lead reports the hold released, not that replies will be sent", () => {
   const message = statusMessageFromQuery({ resolved: "1", remaining: "0", reactivated: "1" });
   assert.match(message?.text ?? "", /returned to acknowledged/);
   assert.doesNotMatch(message?.text ?? "", /still open/);
@@ -260,8 +260,8 @@ test("resolve of the last escalation on an escalated lead reports that replies r
 test("resolve of the last escalation on a staff-set lead must not claim another is open", () => {
   // remainingOpen === 0 and leadReactivated === false: no escalation remains,
   // and the lead's status was deliberately not human_escalation. Claiming
-  // "another escalation is still open" here is doubly wrong — replies do
-  // resume, and nothing is holding them.
+  // "another escalation is still open" here is wrong on both counts — no
+  // escalation remains, and the open-escalation hold does not apply.
   const message = statusMessageFromQuery({ resolved: "1", remaining: "0", reactivated: "0" });
   assert.doesNotMatch(message?.text ?? "", /still open/);
   assert.doesNotMatch(message?.text ?? "", /remain held/);

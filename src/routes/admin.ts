@@ -188,7 +188,7 @@ export function statusMessageFromQuery(query: AdminStatusQuery): StatusMessage |
   if (query.deleted === "1") return { kind: "success", text: "Lead and its message/escalation history were deleted." };
 
   if (query.opted_in === "1")
-    return { kind: "success", text: "Opt-out cleared. This lead can receive automated replies again." };
+    return { kind: "success", text: "Opt-out cleared. The opt-out restriction no longer blocks automated replies." };
 
   if (query.resolved === "1") {
     // Three genuinely different outcomes. leadReactivated === false covers two
@@ -196,7 +196,7 @@ export function statusMessageFromQuery(query: AdminStatusQuery): StatusMessage |
     if (query.remaining !== "0")
       return { kind: "success", text: "Escalation resolved. Another escalation is still open for this lead, so automated replies remain held." };
     if (query.reactivated === "1")
-      return { kind: "success", text: "Escalation resolved. It was the last one open, so this lead returned to acknowledged and automated replies have resumed." };
+      return { kind: "success", text: "Escalation resolved. It was the last one open, so this lead returned to acknowledged and the open-escalation hold no longer applies." };
     return {
       kind: "success",
       text: "Escalation resolved. No escalations remain open. This lead's status was not human_escalation, so it was left unchanged — automated replies are no longer held by an escalation.",
@@ -279,7 +279,7 @@ function renderAdminPage(data: {
         <td>
           ${
             escalation.status === "open"
-              ? `<form method="POST" action="/admin/escalations/${encodeURIComponent(escalation.escalationId)}/resolve" style="margin:0;" onsubmit="return confirm('Mark this escalation resolved? If it is the last open one for this lead, automated replies resume.');">
+              ? `<form method="POST" action="/admin/escalations/${encodeURIComponent(escalation.escalationId)}/resolve" style="margin:0;" onsubmit="return confirm('Mark this escalation resolved? If it is the last open one for this lead, the open-escalation hold no longer applies.');">
             <button type="submit">Resolve</button>
           </form>`
               : ""
@@ -458,8 +458,10 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // Resolves ONE escalation. If it was the last open one for its lead, and
   // that lead is still in human_escalation, the lead returns to
-  // acknowledged and ordinary automated replies resume. There is no
-  // separate "resume" action: resolution is the release mechanism.
+  // acknowledged and the open-escalation hold is released. That releases
+  // one gate, not all of them: opt-out, unavailable escalation state, and a
+  // contradictory lead each still suppress a reply independently. There is
+  // no separate "resume" action: resolution is the release mechanism.
   //
   // Same fail-closed Basic Auth and UUID guard as the routes above. The
   // lead is derived from the escalation inside the transaction, never
