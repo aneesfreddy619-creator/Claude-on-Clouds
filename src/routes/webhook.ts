@@ -227,14 +227,30 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       // message already passed the "not_duplicate" dedupe gate above, so
       // a redelivered WhatsApp message can never create a second row (see
       // createEscalation's comment in src/services/persistence.ts).
+      // Whether an escalation row was SUCCESSFULLY written for this
+      // message. createEscalation catches its own errors and returns false
+      // rather than throwing, so ignoring this value would let a lead be
+      // left in human_escalation with no escalation row — and the customer
+      // told a human would take over when no handoff was recorded. The
+      // pre-send validator uses this to tell that case apart from a healthy
+      // escalation.
+      let escalationRecordedThisMessage = false;
       if (classification.category === "human_escalation" && classification.escalationReason) {
-        await createEscalation({
+        escalationRecordedThisMessage = await createEscalation({
           leadId: lead.leadId,
           lastUserMessage: message.text,
           classification: classification.category,
           escalationReason: classification.escalationReason,
           requiredAction: approvedReply.requiredAction,
         });
+
+        if (!escalationRecordedThisMessage) {
+          logger.error("webhook_escalation_not_recorded", {
+            messageId: message.id,
+            leadId: lead.leadId,
+            escalationReason: classification.escalationReason,
+          });
+        }
       }
 
       // Outbound reply sending: only reached after signature verification,
@@ -247,6 +263,8 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       const validation = validateBeforeSend({
         optedOut: lead.optedOut,
         openEscalationStatus,
+        leadStatus: lead.leadStatus,
+        escalationRecordedThisMessage,
       });
 
       if (validation.permittedReply === "none") {

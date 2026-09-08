@@ -69,10 +69,10 @@ in production. All Railway variables present:
 `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
 `ADMIN_BASIC_AUTH_USER`, `ADMIN_BASIC_AUTH_PASSWORD`.
 
-**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 13
-of 13, at differing strengths. Rows 1-9 were proven live against the Meta
+**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 14
+of 14, at differing strengths. Rows 1-9 were proven live against the Meta
 test number, each verified in Railway logs. Row 10 is unit-proven only.
-Rows 11-13 (open-escalation behaviour, added 2026-09-08) are proven against
+Rows 11-14 (open-escalation and contradiction behaviour, added 2026-09-08) are proven against
 a real database only and have **no live proof yet**.
 
 | # | Message sent | Category / escalation reason | Observed result |
@@ -160,7 +160,7 @@ Read from source, never asserted from memory.
 
 | Module | Status | Coverage |
 |---|---|---|
-| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (19) |
+| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (20) |
 | `security/webhookSignature.ts` | Complete | missing and invalid signature both rejected |
 | `services/dedupe.ts` | Complete | `dedupe.test.ts` (1) + duplicate-delivery case |
 | `services/persistence.ts` | Complete | `persistence.test.ts` (6) + acceptance cases + `clearLeadOptOut` proven against a real database |
@@ -170,12 +170,12 @@ Read from source, never asserted from memory.
 | `rules/appointmentDetailExtraction.ts` | **Partial** | no dedicated tests; exercised indirectly |
 | `routes/admin.ts` | Complete | `admin.test.ts` (19) — includes opt-in and escalation-resolve route auth and UUID guards |
 | `routes/health.ts` | Complete | verified live via Railway healthcheck |
-| `services/preSendValidator.ts` | Complete | `preSendValidator.test.ts` (7) — all four outcomes including the unavailable state |
+| `services/preSendValidator.ts` | Complete | `preSendValidator.test.ts` (13) — every reachable state, including unavailable and contradictory |
 | `services/whatsappSender.ts` | Complete | fail-closed proven by tests; success path proven live nine times on 2026-09-05 |
 | `config/env.ts` | Complete | no validation by design; presence logged at boot |
 | `whatsapp/inboundPayload.ts` | Complete | via webhook tests |
 
-**Totals:** 68 tests across 9 files, all passing.
+**Totals:** 75 tests across 9 files, all passing.
 
 **Maintenance rule:** update this table in the same change that alters a
 module, or do not keep it. An unmaintained registry produces confident
@@ -222,6 +222,39 @@ does not, resolve in `/admin`, confirm the ordinary reply resumes.
 **Open question for the owner:** §17's acceptance table has ten rows and
 does not describe this behaviour. Either it gains a row, or §17 stops being
 the complete acceptance specification. Not decided here.
+
+## Contradictory escalation state (2026-09-08)
+
+Independent review of `99e6b3a` found that `createEscalation` returns
+`boolean` and `webhook.ts` discarded it. A failed escalation write therefore
+left `lead_status = human_escalation` with no open escalation row, sent the
+customer an acknowledgement asserting a handoff that was never recorded,
+and — because `computeLeadStatus` never downgrades that status while the
+lookup keeps reporting `none` — let ordinary automation resume on the next
+message.
+
+**Fix:** the webhook captures whether an escalation was successfully
+recorded for this message and passes it, with the lead's status, to the
+pre-send validator. A lead in `human_escalation` with no open escalation,
+where this message did not record one, is `CONTRADICTORY` and sends nothing.
+The healthy escalating message is unaffected: its lookup also reports
+`none`, but its row was written.
+
+Nothing is invented. Two authoritative sources disagree and the validator
+reports the disagreement rather than choosing whichever is convenient —
+the same discipline as the tri-state lookup, one level up.
+
+**Proven against a real database** by injecting a `CHECK (false) NOT VALID`
+constraint so `SELECT` still succeeds while `INSERT` fails, which is what
+makes it the contradiction path rather than the unavailable path. The run
+log confirms `CONTRADICTORY` twice — once for the escalating message, once
+for the later ordinary one.
+
+**Known limitation:** such a lead has no open escalation, so the Resolve
+button never appears and staff cannot clear it from the admin page. The
+admin lead row is flagged "Contradictory escalation state — staff review
+required", which deliberately does not claim a cause. Recovery semantics
+are a separate product decision and nothing is repaired automatically.
 
 ## Test isolation for the unavailable-state proof
 

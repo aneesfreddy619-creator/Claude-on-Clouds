@@ -35,11 +35,11 @@ Where things live:
 
 **V0 is complete (2026-09-05).**
 
-Backend green: 68 automated tests passing, build clean, deployed on Railway from main,
+Backend green: 75 automated tests passing, build clean, deployed on Railway from main,
 /health and /admin working, all seven env vars set.
-§17 acceptance tests: 13 of 13 pass — rows 1–9 proven live end-to-end against the Meta test number,
+§17 acceptance tests: 14 of 14 pass — rows 1–9 proven live end-to-end against the Meta test number,
 row 10 (duplicate webhook) proven against a real database in webhook.persistence.test.ts and not
-live-triggerable, since Meta will not redeliver a wamid on demand. Rows 11-13 (open-escalation
+live-triggerable, since Meta will not redeliver a wamid on demand. Rows 11-14 (open-escalation
 behaviour, added 2026-09-08) are proven against a real database only and have NO live proof yet.
 §19 definition of done: satisfied — a real WhatsApp message produced an approved reply observed
 in WhatsApp, with Meta status webhooks confirming sent then read.

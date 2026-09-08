@@ -61,6 +61,11 @@ export interface LeadPersistenceInput {
 export interface LeadPersistenceResult {
   leadId: string;
   optedOut: boolean;
+  // The lead's status AFTER this message was applied. Already computed by
+  // computeLeadStatus above in both branches, so returning it costs no
+  // extra query. The pre-send validator needs it to detect a lead left in
+  // human_escalation with no open escalation row.
+  leadStatus: string;
 }
 
 // Finds the lead by whatsapp_phone, or creates one, then updates only the
@@ -97,7 +102,7 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
         .returning({ leadId: leads.leadId, optedOut: leads.optedOut });
 
       logger.info("webhook_lead_created", { leadId: inserted[0].leadId, leadStatus: initialStatus, category: input.category });
-      return { leadId: inserted[0].leadId, optedOut: inserted[0].optedOut };
+      return { leadId: inserted[0].leadId, optedOut: inserted[0].optedOut, leadStatus: initialStatus };
     }
 
     const lead = existing[0];
@@ -137,7 +142,7 @@ export async function findOrCreateAndUpdateLead(input: LeadPersistenceInput): Pr
     await db.update(leads).set(updateValues).where(eq(leads.leadId, lead.leadId));
 
     logger.info("webhook_lead_updated", { leadId: lead.leadId, leadStatus: nextStatus, category: input.category });
-    return { leadId: lead.leadId, optedOut: lead.optedOut };
+    return { leadId: lead.leadId, optedOut: lead.optedOut, leadStatus: nextStatus };
   } catch (error) {
     logger.error("webhook_lead_persistence_failed", {
       whatsappPhone: input.whatsappPhone,

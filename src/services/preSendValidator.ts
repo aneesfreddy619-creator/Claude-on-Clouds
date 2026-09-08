@@ -8,7 +8,7 @@
 // This is the deterministic core in miniature: an approved reply exists
 // (possibility), live state may forbid sending it (admissibility), and
 // this function decides applicability. No model, no inference, no
-// invented information — three explicit rules over explicit facts.
+// invented information — a fixed, ordered set of rules over explicit facts.
 //
 // Deliberately pure: no database access, no I/O, no clock. Callers gather
 // the facts; this decides. That keeps every rule unit-testable without a
@@ -16,10 +16,10 @@
 
 import type { OpenEscalationStatus } from "./persistence.js";
 
-// The full result vocabulary. Only BLOCKED, HUMAN_REQUIRED and VALID are
-// reachable today; the rest are declared so later work extends this type
-// rather than redefining it, and so a `switch` on the state is exhaustive
-// from the start.
+// The full result vocabulary. BLOCKED, INCOMPLETE, CONTRADICTORY,
+// HUMAN_REQUIRED and VALID are all reachable today. NOT_APPLICABLE is
+// declared but unreachable, so later work extends this type rather than
+// redefining it, and a `switch` on the state is exhaustive from the start.
 export type ValidationState =
   | "VALID"
   | "INCOMPLETE"
@@ -40,11 +40,26 @@ export interface PreSendFacts {
   // row was created. Tri-state on purpose — see OpenEscalationStatus in
   // src/services/persistence.ts.
   //
-  // Deliberately NOT lead_status === "human_escalation". That status is
-  // set by the classifier and means "this message needed a human", not "a
-  // human has taken over". A lead never leaves it, so using it here would
-  // silence the lead permanently with no way back.
+  // Deliberately NOT the same thing as lead_status === "human_escalation".
+  // That status is set by the classifier and means "this message needed a
+  // human"; the open escalation row is what means "a human owns this case".
+  // Staff resolving the last open escalation returns the lead to
+  // acknowledged (see resolveEscalation in ./persistence.ts), so the two can
+  // and do move independently — which is exactly why both are checked.
   openEscalationStatus: OpenEscalationStatus;
+
+  // The lead's status after this message was applied.
+  leadStatus: string;
+
+  // Whether an escalation row was SUCCESSFULLY written for THIS message.
+  // Deterministic and never unknown: false for every non-escalating
+  // message, false when creation was attempted and failed, true only on a
+  // confirmed write.
+  //
+  // This is what separates the healthy escalating message (lead just became
+  // human_escalation, pre-message lookup was none, row was written) from a
+  // lead stranded in human_escalation with no escalation row at all.
+  escalationRecordedThisMessage: boolean;
 }
 
 export interface ValidationResult {
@@ -65,8 +80,10 @@ export interface ValidationResult {
 // 2. Unknown escalation state outranks a send. We could not establish
 //    whether a human owns this case, so we send nothing rather than
 //    guessing in either direction.
-// 3. An observed open escalation permits only the pending reply.
-// 4. Otherwise the ordinary approved reply is permitted.
+// 3. A contradiction between the lead row and the escalations table
+//    permits nothing.
+// 4. An observed open escalation permits only the pending reply.
+// 5. Otherwise the ordinary approved reply is permitted.
 export function validateBeforeSend(facts: PreSendFacts): ValidationResult {
   if (facts.optedOut) {
     return { state: "BLOCKED", permittedReply: "none", reason: "opted_out" };
@@ -83,6 +100,28 @@ export function validateBeforeSend(facts: PreSendFacts): ValidationResult {
   // convenient value.
   if (facts.openEscalationStatus === "escalation_state_unavailable") {
     return { state: "INCOMPLETE", permittedReply: "none", reason: "escalation_state_unavailable" };
+  }
+
+  // Contradiction: the lead row says a human owns this case, but no open
+  // escalation exists to support that — and this message did not just
+  // record one. Two authoritative sources disagree and nothing here can
+  // resolve which is right, so we send nothing.
+  //
+  // Reachable when an escalation row could not be written while the lead
+  // had already been moved to human_escalation. Without this rule the lead
+  // is stranded: the status is sticky (computeLeadStatus never downgrades
+  // it), the lookup keeps reporting none, and ordinary automation would
+  // resume for a customer who was told a human would take over.
+  //
+  // The healthy escalating message is NOT caught here: its lookup also
+  // reports none, but its escalation row was written this turn, so
+  // escalationRecordedThisMessage is true and it falls through to VALID.
+  if (
+    facts.leadStatus === "human_escalation" &&
+    facts.openEscalationStatus === "none" &&
+    !facts.escalationRecordedThisMessage
+  ) {
+    return { state: "CONTRADICTORY", permittedReply: "none", reason: "escalated_lead_without_open_escalation" };
   }
 
   // Human takeover. Checked against state BEFORE this message, so the

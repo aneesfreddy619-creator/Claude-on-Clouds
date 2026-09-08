@@ -582,3 +582,87 @@ test("acceptance: escalation state unavailable sends nothing at all — no ordin
 
   await app.close();
 });
+
+// ---------------------------------------------------------------------------
+// Escalation-creation failure must not strand a lead in a contradictory
+// state that silently resumes automation.
+//
+// Failure is injected with a NOT VALID CHECK constraint so that SELECT on
+// escalations still succeeds while INSERT fails. That distinction is the
+// point: it proves the CONTRADICTORY path, not escalation_state_unavailable.
+// Verified before writing this test — SELECT returned rows while INSERT
+// raised a check-constraint violation.
+// ---------------------------------------------------------------------------
+test("acceptance: a failed escalation write sends nothing, and later automation does not resume", async () => {
+  const app = buildApp();
+  const from = `9199908${Math.floor(Math.random() * 100000)}`;
+  const escalatingMessageId = `wamid.${randomUUID()}`;
+  const laterMessageId = `wamid.${randomUUID()}`;
+
+  try {
+    await db.execute(sql`ALTER TABLE escalations ADD CONSTRAINT tmp_block_insert CHECK (false) NOT VALID`);
+
+    // Precondition: SELECT still works, so the lookup reports "none" rather
+    // than "escalation_state_unavailable".
+    const readable = await db.select().from(escalations).where(eq(escalations.status, "open"));
+    assert.ok(Array.isArray(readable), "escalation SELECT must still succeed during the injected failure");
+
+    // 1. An escalating inbound message whose escalation row cannot be written.
+    await postSignedWebhook(app, textMessagePayload(escalatingMessageId, from, "Talk to a person"));
+
+    const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+    assert.equal(leadRows.length, 1, "the inbound message is still persisted as a lead");
+    const leadId = leadRows[0].leadId;
+
+    // 2. The lead was moved to human_escalation.
+    assert.equal(leadRows[0].leadStatus, "human_escalation");
+
+    // 3. No escalation row exists for it.
+    const escalationRows = await db.select().from(escalations).where(eq(escalations.leadId, leadId));
+    assert.equal(escalationRows.length, 0, "the escalation row was not written");
+
+    // 4. No outbound acknowledgement was sent — the system must not tell the
+    //    customer a human will take over when no handoff was recorded.
+    assert.deepEqual(await outboundTextsFor(leadId), [], "no escalation acknowledgement may be sent");
+
+    // 5. A later ordinary message is still recorded.
+    await postSignedWebhook(app, textMessagePayload(laterMessageId, from, "Where are you located and what are your timings?"));
+    const laterInbound = await db.select().from(messageLog).where(eq(messageLog.messageId, laterMessageId));
+    assert.equal(laterInbound.length, 1, "the customer's later message is still captured");
+
+    // 6 & 7. But nothing is sent: neither the ordinary reply (automation must
+    //        not resume) nor the pending reply (no escalation is awaiting
+    //        review, so that text would assert something untrue).
+    const outbound = await outboundTextsFor(leadId);
+    assert.deepEqual(outbound, [], "automation must not resume for a contradictory lead");
+
+    // 8. The admin page surfaces the contradiction rather than hiding it.
+    const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+    const adminResponse = await app.inject({
+      method: "GET",
+      url: "/admin",
+      headers: { authorization: `Basic ${credentials}` },
+    });
+    assert.equal(adminResponse.statusCode, 200);
+    assert.ok(
+      adminResponse.body.includes("Contradictory escalation state"),
+      "the admin page must warn about the contradictory lead"
+    );
+  } finally {
+    await db.execute(sql`ALTER TABLE escalations DROP CONSTRAINT IF EXISTS tmp_block_insert`);
+  }
+
+  // 9. With the failure removed, the healthy escalation path is unchanged.
+  const healthyFrom = `9199909${Math.floor(Math.random() * 100000)}`;
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, healthyFrom, "Talk to a person"));
+  const healthyLead = await db.select().from(leads).where(eq(leads.whatsappPhone, healthyFrom));
+  const healthyEscalations = await db.select().from(escalations).where(eq(escalations.leadId, healthyLead[0].leadId));
+  assert.equal(healthyEscalations.length, 1, "the healthy path still records an escalation");
+  assert.deepEqual(
+    await outboundTextsFor(healthyLead[0].leadId),
+    [ESCALATION_REPLIES.humanRequest],
+    "the healthy escalating message still receives its own escalation reply"
+  );
+
+  await app.close();
+});

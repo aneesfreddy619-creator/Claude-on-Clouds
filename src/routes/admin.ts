@@ -188,6 +188,10 @@ function renderAdminPage(data: {
   leads: LeadRow[];
   messages: MessageRow[];
   escalations: EscalationRow[];
+  // Lead ids that currently have at least one OPEN escalation. Queried
+  // separately rather than derived from the escalations list above, which
+  // is capped at ADMIN_ROW_LIMIT and would misreport older leads.
+  leadIdsWithOpenEscalation: Set<string>;
   statusMessage: StatusMessage | null;
 }): string {
   const leadRows = data.leads
@@ -195,7 +199,11 @@ function renderAdminPage(data: {
       (lead) => `<tr>
         <td>${cell(lead.whatsappPhone)}</td>
         <td>${cell(lead.displayName)}</td>
-        <td>${cell(lead.leadStatus)}</td>
+        <td>${cell(lead.leadStatus)}${
+          lead.leadStatus === "human_escalation" && !data.leadIdsWithOpenEscalation.has(lead.leadId)
+            ? '<br><strong style="color:#b00;">Contradictory escalation state — staff review required.</strong>'
+            : ""
+        }</td>
         <td>${cell(lead.primaryCategory)}</td>
         <td>${cell(lead.escalationReason)}</td>
         <td>${lead.optedOut ? "yes" : "no"}</td>
@@ -312,7 +320,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
-        const [leadRows, messageRows, escalationRows] = await Promise.all([
+        const [leadRows, messageRows, escalationRows, openEscalationLeadRows] = await Promise.all([
           db.select().from(leads).orderBy(desc(leads.updatedAt)).limit(ADMIN_ROW_LIMIT),
           db
             .select({
@@ -343,12 +351,26 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
             .leftJoin(leads, eq(escalations.leadId, leads.leadId))
             .orderBy(desc(escalations.createdAt))
             .limit(ADMIN_ROW_LIMIT),
+          // Every lead with an OPEN escalation, unbounded by ADMIN_ROW_LIMIT.
+          // Used only to flag leads whose status and escalation state
+          // disagree; deriving this from the capped list above would
+          // mislabel older leads.
+          db
+            .selectDistinct({ leadId: escalations.leadId })
+            .from(escalations)
+            .where(eq(escalations.status, "open")),
         ]);
+
+        const leadIdsWithOpenEscalation = new Set(openEscalationLeadRows.map((row) => row.leadId));
+        const contradictoryLeadCount = leadRows.filter(
+          (lead) => lead.leadStatus === "human_escalation" && !leadIdsWithOpenEscalation.has(lead.leadId)
+        ).length;
 
         logger.info("admin_page_viewed", {
           leadCount: leadRows.length,
           messageCount: messageRows.length,
           escalationCount: escalationRows.length,
+          contradictoryLeadCount,
         });
 
         return reply.type("text/html").send(
@@ -356,6 +378,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
             leads: leadRows,
             messages: messageRows,
             escalations: escalationRows,
+            leadIdsWithOpenEscalation,
             statusMessage: statusMessageFromQuery(request.query),
           })
         );

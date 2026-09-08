@@ -57,7 +57,7 @@ Current checkpoint for this workspace:
 - Backend is complete, tested, and deployed: webhook verification, signature verification, deduplication, rule-based classification, approved replies, lead/message/escalation persistence, STOP handling, and protected admin inspection.
 - All Railway environment variables are entered; `GET /health` and `/admin` work in production.
 - The Meta app was **published (Live) on 2026-09-05**, which was the final blocker: Meta does not dispatch production webhook data to unpublished apps, only dashboard test events.
-- **Section 17 acceptance tests: 13 of 13 pass, at differing strengths.** Rows 1–9 were proven live end-to-end against the Meta test number on 2026-09-05. Row 10 (duplicate webhook) is proven against a real database in `src/routes/webhook.persistence.test.ts` and is not live-triggerable, since Meta will not redeliver a `wamid` on demand. Rows 11–13 (open-escalation behaviour, added 2026-09-08) are proven against a real database only and **have no live proof yet** — a live run is required before that behaviour is treated as production-verified.
+- **Section 17 acceptance tests: 14 of 14 pass, at differing strengths.** Rows 1–9 were proven live end-to-end against the Meta test number on 2026-09-05. Row 10 (duplicate webhook) is proven against a real database in `src/routes/webhook.persistence.test.ts` and is not live-triggerable, since Meta will not redeliver a `wamid` on demand. Rows 11–14 (open-escalation and contradiction behaviour, added 2026-09-08) are proven against a real database only and **have no live proof yet** — a live run is required before that behaviour is treated as production-verified.
 - **Section 19 Definition of done: satisfied.** A real WhatsApp message produced an approved reply observed in WhatsApp, with Meta status webhooks confirming `sent` then `read`.
 
 **V0 is complete.**
@@ -367,6 +367,7 @@ whatsapp_path: "Meta WhatsApp Cloud API test number only"
 | A supported question ("Where are you located and what are your timings?") sent while that lead has an *observed* open escalation | Its ordinary approved reply is **not** sent; the approved `pending_escalation` reply is sent in its place |
 | Staff resolve the last open escalation, then the same supported question is sent again | `lead_status` returns from `human_escalation` to `acknowledged`, only if still in that status; the question receives its normal approved reply again |
 | A supported question sent while escalation state **cannot be established** | Neither the ordinary approved reply nor the `pending_escalation` reply is sent; the inbound message is still recorded |
+| A lead is in `human_escalation` but has **no open escalation row**, and this message did not record one | Nothing is sent — not the ordinary reply, not `pending_escalation`. The inbound message is still recorded, and the admin page flags the lead for staff review |
 
 Row 8 ("Talk to a person") is the message that *creates* an escalation, and
 still receives its own approved escalation reply. The three rows above
@@ -560,6 +561,29 @@ awaiting review — a fact that has not been established. Missing
 information is represented as missing and never substituted with a
 convenient value. Opt-out still outranks all three: an opted-out lead
 receives nothing, including `pending_escalation`.
+
+**Contradictory state.** A lead in `lead_status = human_escalation` with no
+open escalation row is a contradiction, not an absence — unless this very
+message recorded one successfully. The lead row and the escalations table
+are both authoritative and they disagree, so **nothing is sent**: not the
+ordinary reply, and not `pending_escalation`. The system does not decide
+which source is right and does not repair the state.
+
+This arises when a lead is moved to `human_escalation` but its escalation
+row cannot be written. Without this rule the lead would be stranded: the
+status never downgrades, the lookup keeps reporting none, and ordinary
+automation would resume for someone who was told a human would take over.
+
+The message that *creates* an escalation is not caught by this: its lookup
+also reports none, but its row was written, so it still receives its own
+approved escalation reply.
+
+Precedence, in order: opted out → escalation state unavailable →
+contradictory → observed open → otherwise the ordinary approved reply.
+
+Because such a lead has no open escalation, no Resolve action is available
+to staff. The admin page therefore flags it for review. Recovery is a
+separate product decision and is not automated.
 
 ### 23.5 Lead status rules
 
