@@ -188,3 +188,40 @@ test("POST /admin/leads/:leadId/opt-in with valid credentials but a malformed le
   assert.equal(response.headers.location, "/admin?error=invalid_lead_id");
   await app.close();
 });
+
+// Escalation resolve: same fail-closed auth and UUID guard as the routes
+// above. Both checks resolve before any database access.
+test("POST /admin/escalations/:escalationId/resolve with no credentials is rejected", async () => {
+  const app = buildApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/escalations/00000000-0000-0000-0000-000000000000/resolve",
+  });
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});
+
+test("POST /admin/escalations/:escalationId/resolve with the wrong credentials is rejected", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("wrong-user:wrong-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/escalations/00000000-0000-0000-0000-000000000000/resolve",
+    headers: { authorization: `Basic ${credentials}` },
+  });
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});
+
+test("POST /admin/escalations/:escalationId/resolve with a malformed id is rejected before touching the database", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/escalations/not-a-uuid/resolve",
+    headers: { authorization: `Basic ${credentials}` },
+  });
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "/admin?error=invalid_escalation_id");
+  await app.close();
+});

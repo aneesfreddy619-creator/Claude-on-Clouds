@@ -7,7 +7,7 @@ import { db } from "../db/client.js";
 import { leads } from "../db/schema/leads.js";
 import { messageLog } from "../db/schema/messageLog.js";
 import { escalations } from "../db/schema/escalations.js";
-import { clearLeadOptOut, deleteLeadAndHistory } from "../services/persistence.js";
+import { clearLeadOptOut, deleteLeadAndHistory, resolveEscalation } from "../services/persistence.js";
 
 // Admin inspection page for Clinic Lead Desk V0 (Section 13 "Simple admin
 // page or API endpoint"). Read-only except for one action: deleting a test
@@ -171,8 +171,14 @@ interface StatusMessage {
 // redirects with back into a plain status line — no session/flash storage,
 // just a query param read once on the next GET, matching the page's
 // existing "minimal, practical, not polished" style.
-function statusMessageFromQuery(query: { deleted?: string; error?: string }): StatusMessage | null {
+function statusMessageFromQuery(query: { deleted?: string; error?: string; resolved?: string; reactivated?: string }): StatusMessage | null {
   if (query.deleted === "1") return { kind: "success", text: "Lead and its message/escalation history were deleted." };
+  if (query.resolved === "1" && query.reactivated === "1")
+    return { kind: "success", text: "Escalation resolved. It was the last one open, so automated replies have resumed for this lead." };
+  if (query.resolved === "1")
+    return { kind: "success", text: "Escalation resolved. Another escalation is still open for this lead, so automated replies remain held." };
+  if (query.error === "resolve_failed") return { kind: "error", text: "Could not resolve that escalation. Check server logs for details." };
+  if (query.error === "invalid_escalation_id") return { kind: "error", text: "Invalid escalation id — nothing was resolved." };
   if (query.error === "delete_failed") return { kind: "error", text: "Deletion failed. Check server logs for details." };
   if (query.error === "invalid_lead_id") return { kind: "error", text: "Invalid lead id — nothing was deleted." };
   return null;
@@ -235,6 +241,15 @@ function renderAdminPage(data: {
         <td>${cell(escalation.requiredAction)}</td>
         <td>${cell(escalation.status)}</td>
         <td>${cell(escalation.createdAt.toISOString())}</td>
+        <td>
+          ${
+            escalation.status === "open"
+              ? `<form method="POST" action="/admin/escalations/${encodeURIComponent(escalation.escalationId)}/resolve" style="margin:0;" onsubmit="return confirm('Mark this escalation resolved? If it is the last open one for this lead, automated replies resume.');">
+            <button type="submit">Resolve</button>
+          </form>`
+              : ""
+          }
+        </td>
       </tr>`
     )
     .join("\n");
@@ -280,8 +295,8 @@ ${messageRows || '<tr><td colspan="6">No messages yet.</td></tr>'}
 
 <h2>Escalations (${data.escalations.length})</h2>
 <table>
-<tr><th>Phone</th><th>Display name</th><th>Last user message</th><th>Escalation reason</th><th>Required action</th><th>Status</th><th>Created</th></tr>
-${escalationRows || '<tr><td colspan="7">No escalations yet.</td></tr>'}
+<tr><th>Phone</th><th>Display name</th><th>Last user message</th><th>Escalation reason</th><th>Required action</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+${escalationRows || '<tr><td colspan="8">No escalations yet.</td></tr>'}
 </table>
 </body>
 </html>`;
@@ -290,7 +305,7 @@ ${escalationRows || '<tr><td colspan="7">No escalations yet.</td></tr>'}
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin",
-    async (request: FastifyRequest<{ Querystring: { deleted?: string; error?: string } }>, reply: FastifyReply) => {
+    async (request: FastifyRequest<{ Querystring: { deleted?: string; error?: string; resolved?: string; reactivated?: string } }>, reply: FastifyReply) => {
       if (!isAuthorized(request)) {
         logger.warn("admin_access_denied", { ip: request.ip });
         return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
@@ -390,4 +405,36 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const success = await clearLeadOptOut(leadId);
     return reply.redirect(success ? "/admin?opted_in=1" : "/admin?error=opt_in_failed");
   });
+
+  // Resolves ONE escalation. If it was the last open one for its lead, and
+  // that lead is still in human_escalation, the lead returns to
+  // acknowledged and ordinary automated replies resume. There is no
+  // separate "resume" action: resolution is the release mechanism.
+  //
+  // Same fail-closed Basic Auth and UUID guard as the routes above. The
+  // lead is derived from the escalation inside the transaction, never
+  // supplied by the caller — see resolveEscalation in
+  // src/services/persistence.ts.
+  app.post(
+    "/admin/escalations/:escalationId/resolve",
+    async (request: FastifyRequest<{ Params: { escalationId: string } }>, reply: FastifyReply) => {
+      if (!isAuthorized(request)) {
+        logger.warn("admin_access_denied", { ip: request.ip });
+        return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
+      }
+
+      const { escalationId } = request.params;
+      if (!UUID_PATTERN.test(escalationId)) {
+        logger.warn("admin_escalation_resolve_rejected", { escalationId, reason: "invalid_escalation_id" });
+        return reply.redirect("/admin?error=invalid_escalation_id");
+      }
+
+      const result = await resolveEscalation(escalationId);
+      if (!result.leadId) {
+        return reply.redirect("/admin?error=resolve_failed");
+      }
+
+      return reply.redirect(result.leadReactivated ? "/admin?resolved=1&reactivated=1" : "/admin?resolved=1");
+    }
+  );
 }

@@ -35,11 +35,12 @@ Where things live:
 
 **V0 is complete (2026-09-05).**
 
-Backend green: 47 automated tests passing, build clean, deployed on Railway from main,
+Backend green: 68 automated tests passing, build clean, deployed on Railway from main,
 /health and /admin working, all seven env vars set.
-§17 acceptance tests: 10 of 10 pass — nine proven live end-to-end against the Meta test number,
+§17 acceptance tests: 13 of 13 pass — rows 1–9 proven live end-to-end against the Meta test number,
 row 10 (duplicate webhook) proven against a real database in webhook.persistence.test.ts and not
-live-triggerable, since Meta will not redeliver a wamid on demand.
+live-triggerable, since Meta will not redeliver a wamid on demand. Rows 11-13 (open-escalation
+behaviour, added 2026-09-08) are proven against a real database only and have NO live proof yet.
 §19 definition of done: satisfied — a real WhatsApp message produced an approved reply observed
 in WhatsApp, with Meta status webhooks confirming sent then read.
 
@@ -57,8 +58,8 @@ Full account in v0-implementation-decisions.md.
   fixed it. Temporary tokens expire on a fixed cycle, so this recurs. A permanent System User token
   is the durable fix; not yet applied.
 - **The test number is opted out.** The single approved test recipient sent STOP during the live run,
-  so its lead row carries opted_out = true and receives no further automated replies. Clearing that
-  flag is a deliberate database change, not yet approved.
+  so its lead row carries opted_out = true and receives no further automated replies. Since
+  2026-09-07 staff can clear it from the admin page ("Clear opt-out", shown only on opted-out rows).
 - **Supabase pooler.** DATABASE_URL must stay on the IPv4 session pooler. See
   v0-implementation-decisions.md — do not revert to the direct host.
 

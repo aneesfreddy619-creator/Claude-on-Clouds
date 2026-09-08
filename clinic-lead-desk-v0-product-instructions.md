@@ -57,7 +57,7 @@ Current checkpoint for this workspace:
 - Backend is complete, tested, and deployed: webhook verification, signature verification, deduplication, rule-based classification, approved replies, lead/message/escalation persistence, STOP handling, and protected admin inspection.
 - All Railway environment variables are entered; `GET /health` and `/admin` work in production.
 - The Meta app was **published (Live) on 2026-09-05**, which was the final blocker: Meta does not dispatch production webhook data to unpublished apps, only dashboard test events.
-- **Section 17 acceptance tests: 10 of 10 pass.** Nine proven live end-to-end against the Meta test number on 2026-09-05; row 10 (duplicate webhook) proven against a real database in `src/routes/webhook.persistence.test.ts` and not live-triggerable, since Meta will not redeliver a `wamid` on demand.
+- **Section 17 acceptance tests: 13 of 13 pass, at differing strengths.** Rows 1–9 were proven live end-to-end against the Meta test number on 2026-09-05. Row 10 (duplicate webhook) is proven against a real database in `src/routes/webhook.persistence.test.ts` and is not live-triggerable, since Meta will not redeliver a `wamid` on demand. Rows 11–13 (open-escalation behaviour, added 2026-09-08) are proven against a real database only and **have no live proof yet** — a live run is required before that behaviour is treated as production-verified.
 - **Section 19 Definition of done: satisfied.** A real WhatsApp message produced an approved reply observed in WhatsApp, with Meta status webhooks confirming `sent` then `read`.
 
 **V0 is complete.**
@@ -151,7 +151,16 @@ faq:
   medical_or_urgent: "I’m unable to provide medical guidance on WhatsApp. I’m notifying the clinic team so they can assist you. If this is an emergency, please contact local emergency services or seek urgent medical care."
   complaint: "I’m sorry to hear that. I’m notifying the clinic team so they can review this and contact you directly."
   human_request: "I’m notifying the reception team. They will assist you as soon as possible during clinic hours."
+  pending_escalation: "Thanks for your message. Your earlier message is awaiting review by the clinic team. If this is a medical emergency, please contact local emergency services or seek urgent medical care."
 ```
+
+`pending_escalation` is sent in place of an ordinary category reply when a
+message arrives while that lead already has an escalation observed open.
+It deliberately states no channel, no time commitment, and no promise of a
+final answer: it says only what an open escalation row actually proves.
+"Awaiting review" rather than "passed to" is deliberate — see Section 13:
+no staff notification mechanism exists, so "passed to" would imply an
+operational handoff the system does not perform.
 
 ## 10. Conversation behaviour
 
@@ -259,6 +268,16 @@ The notification or record must include:
 - Timestamp.
 - Required action: `reply`, `call`, `review complaint`, or `clinical team review`.
 
+**No staff notification mechanism exists.** An escalation is a database row
+that a member of staff must notice by opening the admin page. Nothing
+emails, messages, or alerts anyone. This is why no approved reply states a
+response time or a follow-up channel.
+
+**Prerequisite before any real client:** a reliable staff
+notification/operational mechanism must exist before this system can carry
+any response-time commitment. Until then, no customer-facing text may
+promise one.
+
 ## 14. Simple system map
 
 Mental model for the build:
@@ -345,6 +364,13 @@ whatsapp_path: "Meta WhatsApp Cloud API test number only"
 | "Talk to a person" | Human handoff; stop automation |
 | "STOP" | Set `opted_out = true`; send no further automated messages |
 | Same webhook delivered twice | One stored inbound message; one reply maximum |
+| A supported question ("Where are you located and what are your timings?") sent while that lead has an *observed* open escalation | Its ordinary approved reply is **not** sent; the approved `pending_escalation` reply is sent in its place |
+| Staff resolve the last open escalation, then the same supported question is sent again | `lead_status` returns from `human_escalation` to `acknowledged`, only if still in that status; the question receives its normal approved reply again |
+| A supported question sent while escalation state **cannot be established** | Neither the ordinary approved reply nor the `pending_escalation` reply is sent; the inbound message is still recorded |
+
+Row 8 ("Talk to a person") is the message that *creates* an escalation, and
+still receives its own approved escalation reply. The three rows above
+govern messages arriving *afterwards*, while that escalation is open.
 
 ## 18. Non-goals for V0
 
@@ -515,6 +541,26 @@ Use only the already-approved escalation replies from Section 9:
 Never create, translate, rewrite, or add escalation reply text unless this
 document is updated first.
 
+**While an escalation is open.** When a message arrives and that lead
+already has an escalation *observed* to be open, the approved
+`pending_escalation` reply from Section 9 is sent in place of the ordinary
+category reply. The message that creates an escalation still receives its
+own escalation reply above — only later messages are held.
+
+Escalation state is tri-state, never a boolean:
+
+- **observed open** → send `pending_escalation`
+- **observed none** → send the ordinary approved reply
+- **could not be established** (for example the lookup failed) → send
+  **nothing at all**
+
+The third case is not the same as the first. A failed lookup means the
+system does not know, and `pending_escalation` asserts that a message is
+awaiting review — a fact that has not been established. Missing
+information is represented as missing and never substituted with a
+convenient value. Opt-out still outranks all three: an opted-out lead
+receives nothing, including `pending_escalation`.
+
 ### 23.5 Lead status rules
 
 - A newly created lead starts as `new`.
@@ -525,6 +571,13 @@ document is updated first.
 - Automation must not clear or downgrade an existing `human_escalation`.
 - Automation must not downgrade staff-controlled statuses such as `qualified` or `staff_assigned`.
 - Automation never sets `information_captured`, `qualified`, `staff_assigned`, or `closed`.
+- **Staff resolving an escalation** may move a lead from `human_escalation`
+  to `acknowledged`. This is a staff action, not automation, so the rule
+  above about not clearing `human_escalation` does not apply to it. It
+  happens only when the *last* open escalation for that lead is resolved,
+  and only when the lead is still in `human_escalation` — a status a member
+  of staff has deliberately set since (`staff_assigned`, `qualified`,
+  `closed`) is never overwritten.
 
 ### 23.6 New or existing leads
 

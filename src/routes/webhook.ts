@@ -7,16 +7,18 @@ import { checkDedupeStatus, type DedupeResult } from "../services/dedupe.js";
 import {
   createEscalation,
   findOrCreateAndUpdateLead,
+  checkOpenEscalationStatus,
   parseMessageTimestamp,
   persistInboundMessage,
   persistOutboundMessage,
   recordOptOut,
   updateLeadLastOutboundAt,
 } from "../services/persistence.js";
+import { validateBeforeSend } from "../services/preSendValidator.js";
 import { sendWhatsAppTextReply } from "../services/whatsappSender.js";
 import { extractInboundSummary, type ExtractedInboundSummary, type WhatsAppWebhookPayload } from "../whatsapp/inboundPayload.js";
 import { classifyMessage } from "../rules/classifier.js";
-import { selectApprovedReply } from "../rules/approvedReplies.js";
+import { PENDING_ESCALATION_REPLY, selectApprovedReply } from "../rules/approvedReplies.js";
 import { isStopMessage } from "../rules/stopDetection.js";
 import { extractAppointmentDetails } from "../rules/appointmentDetailExtraction.js";
 
@@ -212,6 +214,12 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         receivedAt: inboundAt,
       });
 
+      // Human-takeover state as it was BEFORE this message's own
+      // escalation row is created below. Read here, deliberately, so the
+      // escalation reply that THIS message triggers still reaches the
+      // customer — only later messages are suppressed.
+      const openEscalationStatus = await checkOpenEscalationStatus(lead.leadId);
+
       // Escalation record: one row per human_escalation classification
       // (Section 12 human handoff), created BEFORE reply sending so the
       // handoff record exists even if outbound sending fails or is
@@ -233,19 +241,49 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       // dedupe, classification, approved-reply selection, lead/inbound
       // message persistence, and (for human_escalation) escalation-row
       // creation have all already happened above.
-      if (lead.optedOut) {
-        logger.info("webhook_reply_skipped", { messageId: message.id, leadId: lead.leadId, reason: "opted_out" });
+      // Pre-send validation: the approved reply is already selected; this
+      // decides whether live state permits sending it. See
+      // src/services/preSendValidator.ts.
+      const validation = validateBeforeSend({
+        optedOut: lead.optedOut,
+        openEscalationStatus,
+      });
+
+      if (validation.permittedReply === "none") {
+        logger.info("webhook_reply_suppressed", {
+          messageId: message.id,
+          leadId: lead.leadId,
+          state: validation.state,
+          reason: validation.reason,
+        });
         continue;
       }
 
-      const sendResult = await sendWhatsAppTextReply(message.from, approvedReply.text);
+      // Which approved reply the validator permits. Selected whole from
+      // approved content — never composed, never altered.
+      const replyTextToSend =
+        validation.permittedReply === "pending_escalation" ? PENDING_ESCALATION_REPLY : approvedReply.text;
+
+      logger.info("webhook_reply_permitted", {
+        messageId: message.id,
+        leadId: lead.leadId,
+        state: validation.state,
+        permittedReply: validation.permittedReply,
+      });
+
+      const sendResult = await sendWhatsAppTextReply(message.from, replyTextToSend);
       const sentAt = new Date();
       const outboundMessageId = sendResult.whatsappMessageId ?? `local-failed-${randomUUID()}`;
 
       await persistOutboundMessage({
         messageId: outboundMessageId,
         leadId: lead.leadId,
-        text: approvedReply.text,
+        // The text actually sent, which is not always the ordinary
+        // category reply — a lead with an open escalation receives the
+        // pending-escalation reply instead. Recording approvedReply.text
+        // here would make the audit trail disagree with what the customer
+        // received.
+        text: replyTextToSend,
         classification,
         sentAt,
         status: sendResult.success ? "sent" : "failed",

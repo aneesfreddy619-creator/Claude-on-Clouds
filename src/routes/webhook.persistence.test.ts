@@ -36,8 +36,9 @@ const { leads } = await import("../db/schema/leads.js");
 const { messageLog } = await import("../db/schema/messageLog.js");
 const { escalations } = await import("../db/schema/escalations.js");
 const { NON_ESCALATION_REPLIES, ESCALATION_REPLIES } = await import("../rules/approvedReplies.js");
-const { eq } = await import("drizzle-orm");
-const { clearLeadOptOut } = await import("../services/persistence.js");
+const { eq, sql } = await import("drizzle-orm");
+const { clearLeadOptOut, resolveEscalation } = await import("../services/persistence.js");
+const { PENDING_ESCALATION_REPLY } = await import("../rules/approvedReplies.js");
 
 const APP_SECRET = "test-app-secret";
 
@@ -399,4 +400,185 @@ test("acceptance: clearLeadOptOut reverses a STOP opt-out without resetting the 
 test("acceptance: clearLeadOptOut returns false for a lead that does not exist", async () => {
   const cleared = await clearLeadOptOut("00000000-0000-0000-0000-000000000000");
   assert.equal(cleared, false);
+});
+
+// ---------------------------------------------------------------------------
+// Human takeover: an open escalation governs admissibility.
+//
+// Source A: an approved opening-hours reply exists.
+// Source B: an unresolved escalation makes it inadmissible.
+// Supervisor: the pre-send validator.
+// Emerging truth: HUMAN_REQUIRED.
+// Permitted action: the approved pending-escalation reply instead.
+// ---------------------------------------------------------------------------
+
+async function outboundTextsFor(leadId: string): Promise<string[]> {
+  const rows = await db.select().from(messageLog).where(eq(messageLog.leadId, leadId));
+  return rows.filter((row) => row.direction === "outbound").map((row) => row.text);
+}
+
+test("acceptance: open escalation replaces the ordinary reply with the approved pending reply, and resolving restores normal automation", async () => {
+  const app = buildApp();
+  const from = `9199903${Math.floor(Math.random() * 100000)}`;
+
+  // 1. Escalate. This message must still receive its OWN escalation reply —
+  //    asking for a human must never be answered with silence.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Talk to a person"));
+
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  assert.equal(leadRows.length, 1);
+  const leadId = leadRows[0].leadId;
+  assert.equal(leadRows[0].leadStatus, "human_escalation");
+
+  let outbound = await outboundTextsFor(leadId);
+  assert.deepEqual(outbound, [ESCALATION_REPLIES.humanRequest], "the escalating message gets its own escalation reply");
+
+  // 2. An ordinary question while the escalation is still open.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Where are you located and what are your timings?"));
+
+  outbound = await outboundTextsFor(leadId);
+  assert.equal(outbound.length, 2, "exactly one further reply was sent");
+  assert.equal(outbound[1], PENDING_ESCALATION_REPLY, "the pending reply is sent");
+  assert.ok(
+    !outbound.includes(NON_ESCALATION_REPLIES.hours_location),
+    "the ordinary hours reply must NOT be sent while an escalation is open"
+  );
+
+  // 3. Staff resolve the escalation. That is the release mechanism — there
+  //    is no separate resume action.
+  const openRows = await db.select().from(escalations).where(eq(escalations.leadId, leadId));
+  assert.equal(openRows.length, 1);
+  const result = await resolveEscalation(openRows[0].escalationId);
+  assert.equal(result.remainingOpen, 0);
+  assert.equal(result.leadReactivated, true);
+
+  const afterResolve = await db.select().from(leads).where(eq(leads.leadId, leadId));
+  assert.equal(afterResolve[0].leadStatus, "acknowledged", "the last open escalation resolving releases the lead");
+
+  // 4. The same ordinary question now gets its normal approved reply.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Where are you located and what are your timings?"));
+
+  outbound = await outboundTextsFor(leadId);
+  assert.equal(outbound.length, 3);
+  assert.equal(outbound[2], NON_ESCALATION_REPLIES.hours_location, "normal automation resumes after resolution");
+
+  // History survives throughout.
+  const allEscalations = await db.select().from(escalations).where(eq(escalations.leadId, leadId));
+  assert.equal(allEscalations.length, 1, "the escalation record is kept, not deleted");
+  assert.equal(allEscalations[0].status, "resolved");
+
+  await app.close();
+});
+
+test("acceptance: a lead with two open escalations stays held until the LAST one is resolved", async () => {
+  const app = buildApp();
+  const from = `9199904${Math.floor(Math.random() * 100000)}`;
+
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Talk to a person"));
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "I want a refund"));
+
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  const leadId = leadRows[0].leadId;
+
+  const openRows = await db.select().from(escalations).where(eq(escalations.leadId, leadId));
+  assert.equal(openRows.length, 2, "two separate escalations");
+
+  // Resolving the first must NOT release the lead.
+  const first = await resolveEscalation(openRows[0].escalationId);
+  assert.equal(first.remainingOpen, 1);
+  assert.equal(first.leadReactivated, false);
+
+  const midway = await db.select().from(leads).where(eq(leads.leadId, leadId));
+  assert.equal(midway[0].leadStatus, "human_escalation", "still held while another escalation is open");
+
+  // Resolving the last one does.
+  const second = await resolveEscalation(openRows[1].escalationId);
+  assert.equal(second.remainingOpen, 0);
+  assert.equal(second.leadReactivated, true);
+
+  const after = await db.select().from(leads).where(eq(leads.leadId, leadId));
+  assert.equal(after[0].leadStatus, "acknowledged");
+
+  await app.close();
+});
+
+test("acceptance: resolving does not overwrite a status staff deliberately set", async () => {
+  const app = buildApp();
+  const from = `9199905${Math.floor(Math.random() * 100000)}`;
+
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Talk to a person"));
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  const leadId = leadRows[0].leadId;
+
+  // A staff member moves the lead on while the escalation is still open.
+  await db.update(leads).set({ leadStatus: "staff_assigned" }).where(eq(leads.leadId, leadId));
+
+  const openRows = await db.select().from(escalations).where(eq(escalations.leadId, leadId));
+  const result = await resolveEscalation(openRows[0].escalationId);
+  assert.equal(result.remainingOpen, 0);
+  assert.equal(result.leadReactivated, false, "no reactivation: the lead was not in human_escalation");
+
+  const after = await db.select().from(leads).where(eq(leads.leadId, leadId));
+  assert.equal(after[0].leadStatus, "staff_assigned", "a deliberate staff status is never overwritten");
+
+  await app.close();
+});
+
+test("acceptance: resolving the same escalation twice is idempotent", async () => {
+  const app = buildApp();
+  const from = `9199906${Math.floor(Math.random() * 100000)}`;
+
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "Talk to a person"));
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  const openRows = await db.select().from(escalations).where(eq(escalations.leadId, leadRows[0].leadId));
+
+  const first = await resolveEscalation(openRows[0].escalationId);
+  const second = await resolveEscalation(openRows[0].escalationId);
+
+  assert.equal(first.leadReactivated, true);
+  assert.equal(second.remainingOpen, 0);
+  assert.equal(second.leadReactivated, false, "already acknowledged, so nothing to reactivate");
+
+  await app.close();
+});
+
+// The locked missingness invariant, proven end-to-end rather than only in
+// the pure validator: when escalation state CANNOT be established, the
+// system invents neither permission nor an escalation. It sends nothing.
+//
+// The escalations table is renamed for the duration of this test so the
+// lookup genuinely fails, then restored in a finally block. Nothing else
+// in the pipeline touches that table for a non-escalating message.
+test("acceptance: escalation state unavailable sends nothing at all — no ordinary reply, no pending reply", async () => {
+  const app = buildApp();
+  const from = `9199907${Math.floor(Math.random() * 100000)}`;
+
+  // Establish the lead first, while the table is intact.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "What is the consultation fee?"));
+  const leadRows = await db.select().from(leads).where(eq(leads.whatsappPhone, from));
+  const leadId = leadRows[0].leadId;
+  const before = await outboundTextsFor(leadId);
+  assert.equal(before.length, 1, "the first message replied normally");
+
+  const inboundMessageId = `wamid.${randomUUID()}`;
+  try {
+    await db.execute(sql`ALTER TABLE escalations RENAME TO escalations_hidden`);
+
+    await postSignedWebhook(app, textMessagePayload(inboundMessageId, from, "Where are you located and what are your timings?"));
+  } finally {
+    await db.execute(sql`ALTER TABLE escalations_hidden RENAME TO escalations`);
+  }
+
+  const after = await outboundTextsFor(leadId);
+  assert.equal(after.length, 1, "no outbound message row was written while escalation state was unknown");
+  assert.ok(!after.includes(NON_ESCALATION_REPLIES.hours_location), "the ordinary reply must not be sent");
+  assert.ok(!after.includes(PENDING_ESCALATION_REPLY), "the pending reply must not be sent either");
+
+  // The inbound message is still recorded: we do not lose what the customer
+  // said, we only decline to answer it.
+  const inboundRows = await db.select().from(messageLog).where(eq(messageLog.messageId, inboundMessageId));
+  assert.equal(inboundRows.length, 1, "the customer's message is still captured");
+  assert.equal(inboundRows[0].direction, "inbound");
+
+  await app.close();
 });

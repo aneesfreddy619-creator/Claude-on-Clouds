@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
 import { leads } from "../db/schema/leads.js";
@@ -348,6 +348,127 @@ export async function deleteLeadAndHistory(leadId: string): Promise<boolean> {
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
+  }
+}
+
+// Tri-state escalation lookup, deliberately NOT a boolean. A failed lookup
+// is not the same thing as "no open escalation", and it is not the same
+// thing as "an escalation is open" either — we simply do not know. Callers
+// must treat "escalation_state_unavailable" as a reason to send nothing:
+// not the ordinary reply (we cannot rule out that a human owns the case)
+// and not the pending reply either (that text asserts a message is
+// awaiting review, which is precisely what could not be established).
+//
+// Same shape as DedupeResult in src/services/dedupe.ts, so the codebase
+// has one way of representing an unknown rather than two.
+export type OpenEscalationStatus = "open" | "none" | "escalation_state_unavailable";
+
+// Reports whether this lead has an escalation still marked "open" — the
+// human-takeover signal used by the pre-send validator. Called BEFORE the
+// current message's own escalation row is created, so it reports state as
+// it was when the message arrived, and the message that triggers an
+// escalation still receives its own escalation reply.
+export async function checkOpenEscalationStatus(leadId: string): Promise<OpenEscalationStatus> {
+  try {
+    const open = await db
+      .select({ escalationId: escalations.escalationId })
+      .from(escalations)
+      .where(and(eq(escalations.leadId, leadId), eq(escalations.status, "open")))
+      .limit(1);
+
+    const result: OpenEscalationStatus = open.length > 0 ? "open" : "none";
+    logger.info("open_escalation_check", { leadId, result });
+    return result;
+  } catch (error) {
+    logger.error("open_escalation_check_failed", {
+      leadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "escalation_state_unavailable";
+  }
+}
+
+export interface ResolveEscalationResult {
+  leadId: string | null;
+  remainingOpen: number;
+  leadReactivated: boolean;
+}
+
+// Resolves ONE escalation, then releases the lead only if that was the
+// last one open. Staff action only, reachable from the protected admin
+// route and nowhere else — no inbound message may resolve an escalation.
+//
+// Escalation-specific by design: resolving one case must not silently
+// close another that is still being worked.
+//
+// The lead is derived from the escalation row rather than supplied
+// separately, so a caller cannot resolve escalation A while reactivating
+// lead B. The whole sequence runs in one transaction, and the lead row is
+// locked FOR UPDATE first: without that, two staff resolving two
+// escalations on the same lead could each see the other still open and
+// neither would reactivate, leaving zero open escalations with the lead
+// still in human_escalation.
+//
+// The final update is conditional on the lead still being in
+// human_escalation, which makes this idempotent and preserves any status a
+// member of staff has deliberately set since (staff_assigned, qualified,
+// closed).
+export async function resolveEscalation(escalationId: string): Promise<ResolveEscalationResult> {
+  try {
+    return await db.transaction(async (tx) => {
+      const target = await tx
+        .select({ leadId: escalations.leadId, status: escalations.status })
+        .from(escalations)
+        .where(eq(escalations.escalationId, escalationId))
+        .limit(1);
+
+      if (target.length === 0) {
+        logger.warn("admin_escalation_resolve_no_match", { escalationId });
+        return { leadId: null, remainingOpen: 0, leadReactivated: false };
+      }
+
+      const leadId = target[0].leadId;
+
+      // Serialise concurrent resolves on this lead.
+      await tx.select({ leadId: leads.leadId }).from(leads).where(eq(leads.leadId, leadId)).for("update");
+
+      if (target[0].status === "open") {
+        await tx
+          .update(escalations)
+          .set({ status: "resolved", updatedAt: new Date() })
+          .where(and(eq(escalations.escalationId, escalationId), eq(escalations.status, "open")));
+      }
+
+      const stillOpen = await tx
+        .select({ escalationId: escalations.escalationId })
+        .from(escalations)
+        .where(and(eq(escalations.leadId, leadId), eq(escalations.status, "open")));
+
+      let leadReactivated = false;
+      if (stillOpen.length === 0) {
+        const reactivated = await tx
+          .update(leads)
+          .set({ leadStatus: "acknowledged", updatedAt: new Date() })
+          .where(and(eq(leads.leadId, leadId), eq(leads.leadStatus, "human_escalation")))
+          .returning({ leadId: leads.leadId });
+        leadReactivated = reactivated.length > 0;
+      }
+
+      logger.info("admin_escalation_resolved", {
+        escalationId,
+        leadId,
+        remainingOpen: stillOpen.length,
+        leadReactivated,
+      });
+
+      return { leadId, remainingOpen: stillOpen.length, leadReactivated };
+    });
+  } catch (error) {
+    logger.error("admin_escalation_resolve_failed", {
+      escalationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { leadId: null, remainingOpen: 0, leadReactivated: false };
   }
 }
 

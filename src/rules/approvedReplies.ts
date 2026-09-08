@@ -31,6 +31,18 @@ export const ESCALATION_REPLIES = {
   humanRequest: "I’m notifying the reception team. They will assist you as soon as possible during clinic hours.",
 };
 
+// Section 9 / Section 23.4: sent in place of an ordinary category reply
+// when a message arrives while that lead already has an escalation
+// OBSERVED open. Never sent when escalation state could not be
+// established — that case sends nothing, because this text asserts a
+// message is awaiting review, which is exactly what was not established.
+//
+// States no channel, no response time, and no promise of a final answer:
+// Section 13 records that no staff notification mechanism exists, so any
+// stronger claim would not be supportable.
+export const PENDING_ESCALATION_REPLY =
+  "Thanks for your message. Your earlier message is awaiting review by the clinic team. If this is a medical emergency, please contact local emergency services or seek urgent medical care.";
+
 // Section 12 "Required action: reply, call, review complaint, or clinical
 // team review."
 export type RequiredAction = "reply" | "call" | "review complaint" | "clinical team review";

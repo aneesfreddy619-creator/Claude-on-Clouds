@@ -69,9 +69,11 @@ in production. All Railway variables present:
 `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
 `ADMIN_BASIC_AUTH_USER`, `ADMIN_BASIC_AUTH_PASSWORD`.
 
-**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 10
-of 10. Nine rows were proven live against the Meta test number, each
-verified in Railway logs; row 10 is unit-proven only.
+**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 13
+of 13, at differing strengths. Rows 1-9 were proven live against the Meta
+test number, each verified in Railway logs. Row 10 is unit-proven only.
+Rows 11-13 (open-escalation behaviour, added 2026-09-08) are proven against
+a real database only and have **no live proof yet**.
 
 | # | Message sent | Category / escalation reason | Observed result |
 |---|---|---|---|
@@ -158,7 +160,7 @@ Read from source, never asserted from memory.
 
 | Module | Status | Coverage |
 |---|---|---|
-| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (14) |
+| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (19) |
 | `security/webhookSignature.ts` | Complete | missing and invalid signature both rejected |
 | `services/dedupe.ts` | Complete | `dedupe.test.ts` (1) + duplicate-delivery case |
 | `services/persistence.ts` | Complete | `persistence.test.ts` (6) + acceptance cases + `clearLeadOptOut` proven against a real database |
@@ -166,13 +168,14 @@ Read from source, never asserted from memory.
 | `rules/approvedReplies.ts` | Complete | `approvedReplies.test.ts` (5) + reply-text assertions |
 | `rules/stopDetection.ts` | Complete | `stopDetection.test.ts` (2) + STOP acceptance case |
 | `rules/appointmentDetailExtraction.ts` | **Partial** | no dedicated tests; exercised indirectly |
-| `routes/admin.ts` | Complete | `admin.test.ts` (16) — includes opt-in route auth and UUID guards |
+| `routes/admin.ts` | Complete | `admin.test.ts` (19) — includes opt-in and escalation-resolve route auth and UUID guards |
 | `routes/health.ts` | Complete | verified live via Railway healthcheck |
+| `services/preSendValidator.ts` | Complete | `preSendValidator.test.ts` (7) — all four outcomes including the unavailable state |
 | `services/whatsappSender.ts` | Complete | fail-closed proven by tests; success path proven live nine times on 2026-09-05 |
 | `config/env.ts` | Complete | no validation by design; presence logged at boot |
 | `whatsapp/inboundPayload.ts` | Complete | via webhook tests |
 
-**Totals:** 52 tests across 8 files, all passing.
+**Totals:** 68 tests across 9 files, all passing.
 
 **Maintenance rule:** update this table in the same change that alters a
 module, or do not keep it. An unmaintained registry produces confident
@@ -191,6 +194,54 @@ A passing result validates what it tested, at the version it tested, within
 the coverage it had. **47/47 green does not by itself satisfy Section 19** —
 Section 19 was satisfied by the live run, not by the suite. Any change to
 rules or approved content re-runs tier 1 in full before it is trusted.
+
+## Tier-1 trigger for the pending-escalation reply (2026-09-08)
+
+The governing rule above is **"Any change to rules or approved content
+re-runs tier 1 in full before it is trusted."** It is scoped to *any*
+change to approved content, not only to edits of existing replies.
+
+This milestone adds `pending_escalation` to §9 approved knowledge and a new
+deterministic path that can send it. **Tier 1 is therefore triggered.** An
+earlier claim that leaving the three existing escalation replies untouched
+avoided the requirement was wrong.
+
+**Tier 1 was re-run in full and passed:** all 68 tests green, including the
+§17 accuracy assertions, which read expected text from the exported
+constants rather than restating it. Tier 1 is satisfied.
+
+**Tier 4 is not.** The pending-escalation reply has never been sent over
+real WhatsApp. Tier 4 is not covered by automated tests by definition, so
+the new path carries automated proof only.
+
+**Verification requirement before this behaviour is trusted in
+production:** one live run against the Meta test number — escalate, send an
+ordinary question, confirm the pending reply arrives and the ordinary reply
+does not, resolve in `/admin`, confirm the ordinary reply resumes.
+
+**Open question for the owner:** §17's acceptance table has ten rows and
+does not describe this behaviour. Either it gains a row, or §17 stops being
+the complete acceptance specification. Not decided here.
+
+## Test isolation for the unavailable-state proof
+
+`webhook.persistence.test.ts` proves the `escalation_state_unavailable`
+path by renaming the `escalations` table for the duration of one test and
+restoring it in a `finally` block, so the real catch branch executes rather
+than a mock.
+
+Node's runner executes test *files* in parallel (4-way on the current
+machine), so isolation matters. It holds for three reasons:
+
+1. **Only that one file reaches the local Postgres.** Every other file runs
+   under the suite's intentionally unreachable `…/dummy` URL.
+2. **`admin.test.ts` references escalations only in URL strings** for auth
+   and UUID-guard tests, all of which return before any database access.
+3. **Tests within a file run sequentially** by default, so no other
+   DB-backed test can execute inside the rename window.
+
+Verified empirically: three consecutive full runs, 68/68 each time, with
+`pg_tables` confirming `escalations` intact afterwards.
 
 ## Staleness and review intervals
 
