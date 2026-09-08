@@ -666,3 +666,40 @@ test("acceptance: a failed escalation write sends nothing, and later automation 
 
   await app.close();
 });
+
+// An HTML entity for a quote character, sitting inside a JavaScript string
+// delimited by that same quote, is decoded before the JS is parsed — which
+// closes the string early and makes the handler a syntax error that never
+// registers. The confirmation dialog then silently does not appear.
+//
+// Rendered here rather than asserted against the template, because the defect
+// only exists after HTML parsing. Needs a reachable database, which is why it
+// lives in this file.
+test("acceptance: no admin confirm handler contains an entity-encoded quote", async () => {
+  const app = buildApp();
+  const from = `9199910${Math.floor(Math.random() * 100000)}`;
+
+  // Produce an opted-out lead so the "Clear opt-out" form is rendered at all.
+  await postSignedWebhook(app, textMessagePayload(`wamid.${randomUUID()}`, from, "STOP"));
+
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "GET",
+    url: "/admin",
+    headers: { authorization: `Basic ${credentials}` },
+  });
+  assert.equal(response.statusCode, 200);
+
+  const handlers = response.body.match(/onsubmit="[^"]*"/g) ?? [];
+  assert.ok(handlers.length > 0, "expected at least one confirm handler to be rendered");
+  assert.ok(
+    handlers.some((handler) => handler.includes("opt-in")) || response.body.includes("Clear opt-out"),
+    "expected the opt-out control to be present for an opted-out lead"
+  );
+
+  for (const handler of handlers) {
+    assert.doesNotMatch(handler, /&apos;|&#39;|&quot;|&#34;/, `entity-encoded quote inside a confirm handler: ${handler}`);
+  }
+
+  await app.close();
+});

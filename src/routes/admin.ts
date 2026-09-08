@@ -171,12 +171,39 @@ interface StatusMessage {
 // redirects with back into a plain status line — no session/flash storage,
 // just a query param read once on the next GET, matching the page's
 // existing "minimal, practical, not polished" style.
-function statusMessageFromQuery(query: { deleted?: string; error?: string; resolved?: string; reactivated?: string }): StatusMessage | null {
+export interface AdminStatusQuery {
+  deleted?: string;
+  error?: string;
+  resolved?: string;
+  remaining?: string;
+  reactivated?: string;
+  opted_in?: string;
+}
+
+// Exported for direct unit testing: every branch here is a claim shown to
+// staff, and each must be traceable to a fact the acting route actually
+// reported. Wording that outruns the facts is the same defect class the
+// pre-send validator exists to prevent, one layer up.
+export function statusMessageFromQuery(query: AdminStatusQuery): StatusMessage | null {
   if (query.deleted === "1") return { kind: "success", text: "Lead and its message/escalation history were deleted." };
-  if (query.resolved === "1" && query.reactivated === "1")
-    return { kind: "success", text: "Escalation resolved. It was the last one open, so automated replies have resumed for this lead." };
-  if (query.resolved === "1")
-    return { kind: "success", text: "Escalation resolved. Another escalation is still open for this lead, so automated replies remain held." };
+
+  if (query.opted_in === "1")
+    return { kind: "success", text: "Opt-out cleared. This lead can receive automated replies again." };
+
+  if (query.resolved === "1") {
+    // Three genuinely different outcomes. leadReactivated === false covers two
+    // of them, so remainingOpen is what tells them apart.
+    if (query.remaining !== "0")
+      return { kind: "success", text: "Escalation resolved. Another escalation is still open for this lead, so automated replies remain held." };
+    if (query.reactivated === "1")
+      return { kind: "success", text: "Escalation resolved. It was the last one open, so this lead returned to acknowledged and automated replies have resumed." };
+    return {
+      kind: "success",
+      text: "Escalation resolved. No escalations remain open. This lead's status was not human_escalation, so it was left unchanged — automated replies are no longer held by an escalation.",
+    };
+  }
+
+  if (query.error === "opt_in_failed") return { kind: "error", text: "Could not clear the opt-out. Check server logs for details." };
   if (query.error === "resolve_failed") return { kind: "error", text: "Could not resolve that escalation. Check server logs for details." };
   if (query.error === "invalid_escalation_id") return { kind: "error", text: "Invalid escalation id — nothing was resolved." };
   if (query.error === "delete_failed") return { kind: "error", text: "Deletion failed. Check server logs for details." };
@@ -216,7 +243,7 @@ function renderAdminPage(data: {
           </form>
           ${
             lead.optedOut
-              ? `<form method="POST" action="/admin/leads/${encodeURIComponent(lead.leadId)}/opt-in" style="margin:0;" onsubmit="return confirm('Clear this lead&apos;s opt-out? Only do this if the person has asked to receive messages again.');">
+              ? `<form method="POST" action="/admin/leads/${encodeURIComponent(lead.leadId)}/opt-in" style="margin:0;" onsubmit="return confirm('Clear the opt-out for this lead? Only do this if the person has asked to receive messages again.');">
             <button type="submit">Clear opt-out</button>
           </form>`
               : ""
@@ -313,7 +340,7 @@ ${escalationRows || '<tr><td colspan="8">No escalations yet.</td></tr>'}
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/admin",
-    async (request: FastifyRequest<{ Querystring: { deleted?: string; error?: string; resolved?: string; reactivated?: string } }>, reply: FastifyReply) => {
+    async (request: FastifyRequest<{ Querystring: AdminStatusQuery }>, reply: FastifyReply) => {
       if (!isAuthorized(request)) {
         logger.warn("admin_access_denied", { ip: request.ip });
         return reply.status(401).header("WWW-Authenticate", 'Basic realm="Clinic Lead Desk Admin"').send("Unauthorized");
@@ -457,7 +484,13 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         return reply.redirect("/admin?error=resolve_failed");
       }
 
-      return reply.redirect(result.leadReactivated ? "/admin?resolved=1&reactivated=1" : "/admin?resolved=1");
+      // Carry both facts resolveEscalation actually returned. leadReactivated
+      // alone cannot distinguish "another escalation is still open" from "none
+      // remain, but the lead was not in human_escalation so its status was
+      // deliberately left alone" — and those have opposite meanings for staff.
+      return reply.redirect(
+        `/admin?resolved=1&remaining=${result.remainingOpen}&reactivated=${result.leadReactivated ? "1" : "0"}`
+      );
     }
   );
 }

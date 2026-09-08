@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp } from "../app.js";
-import { serializeError, flattenErrorForLogging } from "./admin.js";
+import { serializeError, flattenErrorForLogging, statusMessageFromQuery } from "./admin.js";
 
 // Auth gating happens before any database access, so it is deterministic
 // without a live database. Successful-auth data rendering is NOT tested
@@ -224,4 +224,46 @@ test("POST /admin/escalations/:escalationId/resolve with a malformed id is rejec
   assert.equal(response.statusCode, 302);
   assert.equal(response.headers.location, "/admin?error=invalid_escalation_id");
   await app.close();
+});
+
+// ---------------------------------------------------------------------------
+// Admin status line. Every branch is a claim shown to staff and must be
+// traceable to a fact the acting route actually reported.
+// ---------------------------------------------------------------------------
+
+test("clearing an opt-out reports success rather than a blank status line", () => {
+  const message = statusMessageFromQuery({ opted_in: "1" });
+  assert.equal(message?.kind, "success");
+  assert.match(message?.text ?? "", /Opt-out cleared/);
+});
+
+test("a failed opt-out clear reports an error rather than a blank status line", () => {
+  const message = statusMessageFromQuery({ error: "opt_in_failed" });
+  assert.equal(message?.kind, "error");
+  assert.match(message?.text ?? "", /Could not clear the opt-out/);
+});
+
+// resolveEscalation returns remainingOpen AND leadReactivated because
+// leadReactivated === false covers two opposite situations. The status line
+// must not collapse them.
+test("resolve with another escalation still open says replies remain held", () => {
+  const message = statusMessageFromQuery({ resolved: "1", remaining: "1", reactivated: "0" });
+  assert.match(message?.text ?? "", /Another escalation is still open/);
+});
+
+test("resolve of the last escalation on an escalated lead reports that replies resumed", () => {
+  const message = statusMessageFromQuery({ resolved: "1", remaining: "0", reactivated: "1" });
+  assert.match(message?.text ?? "", /returned to acknowledged/);
+  assert.doesNotMatch(message?.text ?? "", /still open/);
+});
+
+test("resolve of the last escalation on a staff-set lead must not claim another is open", () => {
+  // remainingOpen === 0 and leadReactivated === false: no escalation remains,
+  // and the lead's status was deliberately not human_escalation. Claiming
+  // "another escalation is still open" here is doubly wrong — replies do
+  // resume, and nothing is holding them.
+  const message = statusMessageFromQuery({ resolved: "1", remaining: "0", reactivated: "0" });
+  assert.doesNotMatch(message?.text ?? "", /still open/);
+  assert.doesNotMatch(message?.text ?? "", /remain held/);
+  assert.match(message?.text ?? "", /was not human_escalation/);
 });
