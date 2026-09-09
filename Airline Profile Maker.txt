@@ -1,0 +1,268 @@
+# [FULL AIRLINE NAME] — VERIFIED PASSENGER-RIGHTS PROFILE
+
+**IATA:** [XX] | **ICAO:** [XXX] | **Country:** [Country] | **Alliance:** [Alliance / None]  
+**Research date:** [Day Month Year]  
+**Profile status:** [DRAFT / PROVISIONAL / REVIEWED]  
+**Scope limit:** This profile assesses publicly available passenger-rights, policy, operational, and behavioural evidence. It does not establish undisclosed internal practice unless directly evidenced.
+
+─────────────────────────────────────────────────────
+
+## REGULATORY REGIMES
+
+- [Jurisdiction / relevant route trigger]: [Rule / regulator / concise entitlement statement] **[DV]** (verified Month Year)
+- [Jurisdiction / relevant route trigger]: [Rule / regulator / concise entitlement statement] **[DV]** (verified Month Year)
+- All relevant international carriage: Montreal Convention 1999, subject to jurisdiction, treaty applicability, and evidence of loss/delay/damage. **[DV]** (verified Month Year)
+
+**Compliance posture:** [High / Moderate / Low / Insufficient evidence]  
+**Flexibility:** [High / Moderate / Low / Insufficient evidence]  
+**Goodwill:** [High / Moderate / Low / Insufficient evidence]  
+**Interline / rerouting reach:** [Strong / Moderate / Limited / Insufficient evidence]  
+**Honesty index:** [X/10, if retained]  
+**Honesty-index basis:** [The specific verified and observed elements used; do not present this as a measured external metric.]
+
+**Core principle:**  
+[One sentence that separates fact from inference. Example: “DIRECTLY VERIFIED — the carrier publishes [relevant policies]. INFERENCE — its hub structure and documented claim history suggest [bounded practical implication]; actual station-level outcomes vary.”]
+
+**VERIFICATION STATUS:** [Directly verified / Strongly corroborated / Plausible, still checking / Unverified or disputed]  
+**Evidence basis:** [DV / CO / SO / IN / AC / NPEF]  
+**Limit:** [What has not been checked or cannot be proven from public evidence.]
+
+─────────────────────────────────────────────────────
+
+## C1 — OVERVIEW & HISTORY
+
+### Directly verified
+- Founded: [claim] **[DV]**
+- Ownership / parent group: [claim] **[DV]**
+- Alliance status: [claim] **[DV]**
+- Fleet and principal markets: [claim, with as-of date] **[DV]**
+
+### Corroborated observation
+- [Historical/strategic context supported by two independent origins.] **[CO]**
+
+### Inference
+- [Only if necessary: explain why this history may matter to passenger outcomes.] **[IN — basis: ...; limit: ...]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** [...]
+
+─────────────────────────────────────────────────────
+
+## C2 — FINANCIAL HEALTH
+
+### Directly verified
+- Revenue, operating result, net result, liquidity, debt, and material financial guidance: [claims, date and reporting period] **[DV]**
+
+### Corroborated observation
+- [External evidence of cost pressure, restructuring, capacity constraints, or fleet-delivery impact.] **[CO]**
+
+### Inference
+- [“Financial pressure may create an incentive to control discretionary compensation; this does not establish the airline’s claims practice.”] **[IN]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** Financial condition is not proof of individual refund, compensation, or goodwill decisions.
+
+─────────────────────────────────────────────────────
+
+## C3 — CONSUMER SENTIMENT & ENFORCEMENT SIGNALS
+
+### Directly verified
+- [Regulatory penalty, consent order, court judgment, official complaint dataset, or independently verifiable performance measure.] **[DV]**
+
+### Corroborated observation
+- [Recurring passenger-experience pattern established by at least two independent origins.] **[CO]**
+
+### Single-source observation
+- [Clearly bounded case report, forum pattern, review dataset, or news report.] **[SO]**
+
+### Interpretation
+- [State the difference between consumer sentiment and proven legal/operational non-compliance.] **[IN, if interpretive]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** Review platforms are self-selected and cannot measure incidence rates or causation.
+
+─────────────────────────────────────────────────────
+
+## N1 — HUB & NETWORK STRUCTURE
+
+### Directly verified
+- Primary hubs: [airport code | airport | country | role] **[DV]**
+- Focus cities / secondary hubs: [claim] **[DV]**
+- Alliance / codeshare / published partner network: [claim] **[DV]**
+- Route reach and key traffic regions: [claim] **[DV]**
+
+### Corroborated observation
+- [Airport share, frequency, hub dominance, or alternative-carrier density where independently sourced.] **[CO]**
+
+### Evidence gap
+- [Do not claim exact route monopoly, bank structure, same-day availability, or interline endorsement likelihood without adequate data.] **[NPEF]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** Published network breadth does not guarantee ticket endorsement, seats, or same-day rebooking capacity.
+
+─────────────────────────────────────────────────────
+
+## N2 — NETWORK SYNTHESIS BLOCK
+
+```text
+SYNTHESIS_START
+IATA: [XX]
+ICAO: [XXX]
+COUNTRY: [XX]
+ALLIANCE: [ALLIANCE / NONE]
+PRIMARY_HUBS: [CODE,CODE]
+SECONDARY_HUBS: [CODE,CODE / NONE]
+FOCUS_CITIES: [CODE,CODE / NONE]
+HUB_DOMINANCE: [CODE:HIGH / MEDIUM / LOW / UNVERIFIED]
+ROUTE_REACH: [DOMESTIC / REGIONAL / GLOBAL]
+ROUTE_CATEGORIES: [LIST]
+CODESHARE_PARTNERS: [IATA LIST / UNVERIFIED]
+INTERLINE_PARTNERS: [IATA LIST / UNVERIFIED]
+REBOOKING_RICHNESS: [CODE:HIGH / MEDIUM / LOW / UNVERIFIED]
+SINGLE_CARRIER_AIRPORTS: [LIST / NONE VERIFIED]
+THIN_ROUTE_DEPENDENCY: [HIGH / MEDIUM / LOW / UNVERIFIED]
+NETWORK_DISRUPTION_RISK: [HIGH / MEDIUM / LOW / UNVERIFIED]
+SYNTHESIS_END
+```
+
+**Synthesis confidence:** [High / Moderate / Low]  
+**Basis:** [DV/CO sources used]  
+**Limit:** [What cannot be inferred from published schedules or partnerships.]
+
+─────────────────────────────────────────────────────
+
+## D1 — SCHEDULE CHANGES
+
+### Directly verified
+- [Airline policy, applicable regulation, definition/threshold if officially stated.] **[DV]** (verified Month Year)
+
+### Observed delivery
+- [Pattern from public cases, stating whether CO or SO.] **[CO / SO]**
+
+### Inference
+- [Only if warranted.] **[IN — basis and limit]**
+
+### Passenger move
+- [Action tied to a verified rule/policy; preserve documents, request written confirmation, identify booking vs operating carrier, escalate to named authority where applicable.] **[DV basis / practical advice]**
+
+### Evidence gap
+- [Unknown data, such as the actual rate of cash refunds vs credit issuance.] **[NPEF]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** [...]
+
+─────────────────────────────────────────────────────
+
+## D2 — NAME CORRECTIONS
+
+[Repeat the D1 structure.]
+
+─────────────────────────────────────────────────────
+
+## D3 — CANCELLATIONS & DELAYS
+
+[Repeat the D1 structure.]
+
+─────────────────────────────────────────────────────
+
+## D4 — LAW & COMPLIANCE
+
+[Repeat the D1 structure.]
+
+─────────────────────────────────────────────────────
+
+## D5 — ENGINEERING & MAINTENANCE
+
+[Repeat the D1 structure.]
+
+Important: Do not infer internal maintenance quality, delay coding, or claims decisions from fleet age, press coverage, or a single disruption. Separate:
+- legal effect of a stated technical cause,
+- official/regulated findings,
+- passenger reports,
+- unverified operational practice.
+
+─────────────────────────────────────────────────────
+
+## D6 — CUSTOMER SERVICE & COMPLAINT HANDLING
+
+[Repeat the D1 structure.]
+
+Important: distinguish the airline’s published contact channels and legally required complaint timelines from evidence about actual response quality or time-to-resolution.
+
+─────────────────────────────────────────────────────
+
+## D7 — DUTY OF CARE DELIVERY
+
+[Repeat the D1 structure.]
+
+Important: distinguish statutory duty of care, airline policy, vouchers supplied at the airport, reimbursement eligibility, and observed delivery. A duty existing in law is not proof it was delivered in a particular case.
+
+─────────────────────────────────────────────────────
+
+## D8 — SPECIAL ASSISTANCE & DENIED BOARDING
+
+### Directly verified
+- Disability assistance rules, denied-boarding rules, official airline process, and regulator enforcement action. **[DV]** (verified Month Year)
+
+### Observed delivery
+- Documented actual outcomes, separately calibrated as CO or SO.
+
+### Passenger move
+- Specific evidence-preservation and escalation action tied to the relevant jurisdiction and operating carrier.
+
+### Evidence gap
+- [Missing rates, absence of independent audit, station-level variance, etc.] **[NPEF]**
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** [...]
+
+─────────────────────────────────────────────────────
+
+## ESCALATION MAP
+
+### Airline channel
+- [Named written channel / claim form / accessibility channel.] **[DV]** (verified Month Year)
+
+### Regulatory authorities
+- [Jurisdiction]: [Authority] — [what it can address]. **[DV]** (verified Month Year)
+
+### ADR / mediation / court path
+- [Body or process, eligibility, timing conditions.] **[DV]** (verified Month Year)
+
+### Practical escalation sequence
+1. Preserve itinerary, notifications, boarding passes, receipts, and written communications.
+2. Submit a written claim to the correct airline entity and identify the operating carrier.
+3. Cite the relevant verified legal or contractual basis.
+4. Escalate to the eligible regulator, ADR scheme, or court only after meeting any stated preconditions.
+5. Keep claims within the verified limitation and filing periods.
+
+**VERIFICATION STATUS:** [...]  
+**Evidence basis:** [...]  
+**Limit:** Jurisdiction depends on itinerary, operating carrier, purchase method, and disruption facts.
+
+─────────────────────────────────────────────────────
+
+## EVIDENCE GAPS
+
+[If triggered, open with exact sparse-profile warning.]
+
+SPARSE PROFILE — fewer than 3 dimensions have public documentation. Significant [OPS] completion required before use.
+
+- [High-impact unresolved issue]: [What public evidence was checked, what was not available, and what additional source would resolve it.] **[NPEF / OPS REQUIRED]**
+- [High-impact unresolved issue]: [...]
+- [High-impact unresolved issue]: [...]
+
+Do not list generic gaps. Prioritise unknowns that could alter a passenger’s legal position, rebooking prospects, compensation claim, accessibility remedy, or evidence strategy.
+
+─────────────────────────────────────────────────────
+
+**Research date:** [Day Month Year]  
+**Last direct-verification sweep:** [Day Month Year]  
+**Profile status:** [DRAFT / PROVISIONAL / REVIEWED]  
+**Status rationale:** [One sentence explaining remaining operational gaps, source conflicts, or direct-evidence limits.]
