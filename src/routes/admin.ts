@@ -338,6 +338,32 @@ ${escalationRows || '<tr><td colspan="8">No escalations yet.</td></tr>'}
 }
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
+  // Accept browser form submissions. Fastify's built-in parsers cover
+  // application/json and text/plain only, so every form POST from the admin
+  // page was rejected with 415 before reaching a handler — before auth,
+  // before the UUID guard, before the database. Registered on this plugin's
+  // encapsulated instance, exactly as webhookRoutes does for its raw-body
+  // JSON parser, so POST /webhook is unaffected and still rejects
+  // form-encoded bodies.
+  //
+  // Every admin form today is a bare submit button with no named inputs, and
+  // all data travels in the URL path (:leadId, :escalationId) — no handler
+  // here reads request.body. So the parser's job is to accept the content
+  // type; parsing fields is for a form that does not yet exist. The
+  // try/catch is defensive: URLSearchParams does not throw on malformed
+  // input, so no test covers that branch.
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_request, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    }
+  );
+
   app.get(
     "/admin",
     async (request: FastifyRequest<{ Querystring: AdminStatusQuery }>, reply: FastifyReply) => {

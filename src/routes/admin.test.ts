@@ -227,6 +227,115 @@ test("POST /admin/escalations/:escalationId/resolve with a malformed id is rejec
 });
 
 // ---------------------------------------------------------------------------
+// Transport. Every admin POST test above injects without a Content-Type, so
+// Fastify never invokes a body parser and the handler runs regardless: those
+// tests exercise the routes but not the transport. A browser form always
+// sends application/x-www-form-urlencoded, which Fastify has no built-in
+// parser for, so all three actions returned 415 before reaching a handler.
+// The tests below send the header a browser actually sends. Reaching the
+// handler's own redirect is the proof the parser ran.
+// ---------------------------------------------------------------------------
+
+const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
+
+test("form-encoded POST to clear opt-out reaches the handler instead of failing with 415", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/leads/not-a-uuid/opt-in",
+    headers: { authorization: `Basic ${credentials}`, "content-type": FORM_CONTENT_TYPE },
+    payload: "",
+  });
+  assert.notEqual(response.statusCode, 415);
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "/admin?error=invalid_lead_id");
+  await app.close();
+});
+
+test("form-encoded POST to delete a lead reaches the handler instead of failing with 415", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/leads/not-a-uuid/delete",
+    headers: { authorization: `Basic ${credentials}`, "content-type": FORM_CONTENT_TYPE },
+    payload: "",
+  });
+  assert.notEqual(response.statusCode, 415);
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "/admin?error=invalid_lead_id");
+  await app.close();
+});
+
+// One registration is meant to cover all three actions. These three tests
+// prove that rather than asserting it.
+test("form-encoded POST to resolve an escalation reaches the handler instead of failing with 415", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/escalations/not-a-uuid/resolve",
+    headers: { authorization: `Basic ${credentials}`, "content-type": FORM_CONTENT_TYPE },
+    payload: "",
+  });
+  assert.notEqual(response.statusCode, 415);
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "/admin?error=invalid_escalation_id");
+  await app.close();
+});
+
+// Accepting the content type must not put a parser ahead of the auth gate.
+test("an unauthenticated form-encoded POST is still rejected with 401, not parsed into the handler", async () => {
+  const app = buildApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/leads/00000000-0000-0000-0000-000000000000/opt-in",
+    headers: { "content-type": FORM_CONTENT_TYPE },
+    payload: "",
+  });
+  assert.equal(response.statusCode, 401);
+  assert.match(response.headers["www-authenticate"] as string, /^Basic realm=/);
+  await app.close();
+});
+
+// Today's forms are bare submit buttons with no named inputs, so the body is
+// empty and every value travels in the URL path. This guards the day one of
+// them gains a field: a populated body must not change the outcome.
+test("a form-encoded POST carrying a field still reaches the same handler behavior", async () => {
+  const app = buildApp();
+  const credentials = Buffer.from("test-admin:test-admin-password").toString("base64");
+  const response = await app.inject({
+    method: "POST",
+    url: "/admin/leads/not-a-uuid/opt-in",
+    headers: { authorization: `Basic ${credentials}`, "content-type": FORM_CONTENT_TYPE },
+    payload: "confirm=yes",
+  });
+  assert.notEqual(response.statusCode, 415);
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.location, "/admin?error=invalid_lead_id");
+  await app.close();
+});
+
+// The parser is registered on the admin plugin's encapsulated instance. If it
+// ever leaks to the root, POST /webhook would begin accepting form-encoded
+// bodies without its raw-body JSON parser running — signature verification
+// would then hash an empty buffer and fail closed, but the webhook's accepted
+// content types would have widened for no reason. This test fails if that
+// happens.
+test("POST /webhook still rejects form-encoded bodies with 415 (admin parser stayed encapsulated)", async () => {
+  const app = buildApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/webhook",
+    headers: { "content-type": FORM_CONTENT_TYPE },
+    payload: "object=whatsapp_business_account",
+  });
+  assert.equal(response.statusCode, 415);
+  await app.close();
+});
+
+// ---------------------------------------------------------------------------
 // Admin status line. Every branch is a claim shown to staff and must be
 // traceable to a fact the acting route actually reported.
 // ---------------------------------------------------------------------------
