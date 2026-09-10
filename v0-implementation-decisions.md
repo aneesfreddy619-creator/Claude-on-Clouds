@@ -69,11 +69,13 @@ in production. All Railway variables present:
 `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
 `ADMIN_BASIC_AUTH_USER`, `ADMIN_BASIC_AUTH_PASSWORD`.
 
-**Proven live end-to-end on 2026-09-05.** §17 acceptance tests stand at 14
-of 14, at differing strengths. Rows 1-9 were proven live against the Meta
-test number, each verified in Railway logs. Row 10 is unit-proven only.
-Rows 11-14 (open-escalation and contradiction behaviour, added 2026-09-08) are proven against
-a real database only and have **no live proof yet**.
+**Proven live end-to-end on 2026-09-05, extended 2026-09-10.** §17 acceptance
+tests stand at 14 of 14, **at differing strengths — read the strength, not the
+count.** Rows 1-9 were proven live against the Meta test number on 2026-09-05,
+each verified in Railway logs. Row 10 is database-proven only. Rows 11 and 12
+were proven live on 2026-09-10, once commit `a18fb1b` fixed the admin form 415
+and made staff resolution reachable in a browser. **Rows 13 and 14 remain
+database-proven only and are HELD with no live proof** — see below the table.
 
 | # | Message sent | Category / escalation reason | Observed result |
 |---|---|---|---|
@@ -86,9 +88,21 @@ a real database only and have **no live proof yet**.
 | 7 | I want a refund | `human_escalation` / `refund_dispute` | escalation row created; escalation reply sent |
 | 8 | Talk to a person | `human_escalation` / `human_request` | escalation row created; escalation reply sent |
 | 9 | "Stop" (capital S) | STOP match, case-insensitive | `opted_out = true`; no classification, no escalation, **no reply** |
-| 10 | duplicate webhook delivery | — | **unit-proven only** in `webhook.persistence.test.ts` against a real database. Not live-triggerable: Meta will not redeliver a `wamid` on demand. |
+| 10 | duplicate webhook delivery | — | **database-proven only** in `webhook.persistence.test.ts` against a real database. Not live-triggerable: Meta will not redeliver a `wamid` on demand. |
+| 11 | consultation fee?, sent while five escalations were open (2026-09-10) | `published_pricing` | **Open-escalation hold overrode the ordinary reply.** The approved pending-review reply was sent in place of the ₹800 `published_pricing` reply; the inbound persisted with its classification; the lead stayed `human_escalation`; opt-out stayed `false`. One outbound attempt recorded `failed`, and a later one recorded `sent` — **the cause of the failed attempt is unknown** and is not explained by the evidence captured. Recorded, not diagnosed. |
+| 12 | consultation fee?, re-sent after the last escalation was resolved (2026-09-10) | `published_pricing` | **Normal automation resumed.** Staff resolved the final open escalation through `/admin`; the lead returned `human_escalation` → `acknowledged`; the same question then received the ordinary ₹800 `published_pricing` reply, outbound status `sent`. Only escalations belonging to this lead were resolved — an unrelated lead's escalation stayed open, so the resolve did not act case-wide. |
 
-**What this run does not prove.** All ten messages came from the single
+**Rows 13 and 14 — HELD, not live-proven, and not scheduled.** Both describe
+states the product is built never to produce. Row 13 requires the
+escalation-state read to fail while a message arrives; row 14 requires a lead
+in `human_escalation` with no open escalation row, which the resolve path
+removes by design the moment the last escalation is cleared. Producing either
+live means inducing a fault in a production source or editing Supabase by
+hand. **Neither is approved.** They stand on their database-backed proof —
+including the `CHECK (false) NOT VALID` injection described under
+"Contradictory escalation state" — and must never be reported as live passes.
+
+**What the 2026-09-05 run does not prove.** All ten messages came from the single
 approved test recipient, whose lead was already in `human_escalation` from
 row 1's follow-ups. Per §23.5 an escalated lead's status is never
 downgraded, so rows 2–4 could not move it to `acknowledged` or
@@ -125,12 +139,17 @@ Railway restored sending. Temporary tokens expire on a fixed cycle, so this
 recurs; a permanent System User token is the durable fix and is not yet
 applied.
 
-**Live state left behind:** the test recipient's lead carries
-`opted_out = true` from row 9 and receives no further automated replies
-until that flag is cleared. Since 2026-09-07 this is a one-click staff
-action on the admin page ("Clear opt-out", shown only on opted-out rows) —
-see "Admin opt-out reversal" below. Doing it is still a deliberate choice,
-not something the system ever does by itself.
+**Test lead 919560640859 — current state (2026-09-10):** `opted_out = false`,
+status `acknowledged`, no open escalations.
+
+*History, kept because it is the evidence trail, not the current state:* row 9
+set `opted_out = true` on 2026-09-05, and the lead was later held in
+`human_escalation` with five open escalations. On 2026-09-10 the opt-out was
+cleared and all five escalations resolved through the admin page, in order to
+run §17 rows 11–12 — see the row 11/12 entries above. Both actions are
+one-click staff actions ("Clear opt-out" since 2026-09-07, "Resolve" since
+2026-09-08); see "Admin opt-out reversal" below. Doing either remains a
+deliberate choice, never something the system does by itself.
 
 **Known infrastructure gotcha:** `DATABASE_URL` must use the Supabase IPv4
 **session pooler** (`aws-0-<region>.pooler.supabase.com:5432`). The direct
@@ -143,12 +162,27 @@ Commands, environment setup, the local-Postgres test prerequisite, and the
 manual-migration policy live in `README.md` (developer documentation, not a
 project document). Not restated here — one home per fact.
 
-Two operational facts that belong with the decisions rather than the README:
+Three operational facts that belong with the decisions rather than the README:
 
-**Known wart:** `npm test` exits 0 but hangs for some minutes after tests
-pass, because the `postgres.js` pool keeps the event loop alive.
-`--test-force-exit` fixes it; not applied, as it is a `package.json` change
-awaiting approval.
+**Known wart — recorded, not fixed.** `src/db/client.ts` opens a
+module-level `postgres()` pool that is never closed, and
+`webhook.persistence.test.ts` has no `after()` hook to end it. Against the
+intentionally unreachable `…/dummy` URL no socket is opened, so `npm test`
+exits 0 after hanging for some minutes. **Against a real local Postgres the
+run does not terminate at all** — the pool holds live sockets and keeps the
+event loop alive indefinitely. Observed 2026-09-10, when per-file runs had to
+be used to obtain a valid 87/87 figure. `--test-force-exit`, or closing the
+pool in an `after()` hook, would fix it; neither is applied, as both are
+changes awaiting their own approval.
+
+**A test that can pass for the wrong reason — recorded, not fixed.** In
+`persistence.test.ts`, the case "clearLeadOptOut returns false for a lead that
+does not exist" asserts `false`. `clearLeadOptOut` also returns `false` from
+its catch path, so an unreachable database produces the expected value without
+exercising the behaviour under test. It passed in the void run of 2026-09-10
+for exactly that reason. The assertion needs to distinguish "no such lead"
+from "the query failed" before it can be trusted. Recorded 2026-09-10; no fix
+approved, and none applied.
 
 **Migrations are never automatic**, by decision. Nothing in `build` or
 `start` runs `db:migrate`, so a deploy can never silently migrate a database
@@ -160,7 +194,7 @@ Read from source, never asserted from memory.
 
 | Module | Status | Coverage |
 |---|---|---|
-| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (20) |
+| `routes/webhook.ts` | Complete | `webhook.test.ts` (4), `webhook.persistence.test.ts` (21) |
 | `security/webhookSignature.ts` | Complete | missing and invalid signature both rejected |
 | `services/dedupe.ts` | Complete | `dedupe.test.ts` (1) + duplicate-delivery case |
 | `services/persistence.ts` | Complete | `persistence.test.ts` (6) + acceptance cases + `clearLeadOptOut` proven against a real database |
@@ -168,14 +202,21 @@ Read from source, never asserted from memory.
 | `rules/approvedReplies.ts` | Complete | `approvedReplies.test.ts` (5) + reply-text assertions |
 | `rules/stopDetection.ts` | Complete | `stopDetection.test.ts` (2) + STOP acceptance case |
 | `rules/appointmentDetailExtraction.ts` | **Partial** | no dedicated tests; exercised indirectly |
-| `routes/admin.ts` | Complete | `admin.test.ts` (19) — includes opt-in and escalation-resolve route auth and UUID guards |
+| `routes/admin.ts` | Complete | `admin.test.ts` (30) — includes opt-in and escalation-resolve route auth and UUID guards, plus the form-encoded transport tests added in `a18fb1b` |
 | `routes/health.ts` | Complete | verified live via Railway healthcheck |
-| `services/preSendValidator.ts` | Complete | `preSendValidator.test.ts` (13) — every reachable state, including unavailable and contradictory |
+| `services/preSendValidator.ts` | Complete | `preSendValidator.test.ts` (14) — every reachable state, including unavailable and contradictory |
 | `services/whatsappSender.ts` | Complete | fail-closed proven by tests; success path proven live nine times on 2026-09-05 |
 | `config/env.ts` | Complete | no validation by design; presence logged at boot |
 | `whatsapp/inboundPayload.ts` | Complete | via webhook tests |
 
-**Totals:** 75 tests across 9 files, all passing.
+**Totals:** 87 tests across 9 files, all passing. Counted from source on
+2026-09-10: admin 30, webhook.persistence 21, preSendValidator 14, webhook 4,
+persistence 6, approvedReplies 5, classifier 4, stopDetection 2, dedupe 1.
+
+**This table had drifted before it was corrected.** It read 75 while source
+held 81, so the maintenance rule below was already being missed by six tests
+before `a18fb1b` added six more. A registry that drifts silently is worse than
+no registry, because it is quoted with confidence.
 
 **Maintenance rule:** update this table in the same change that alters a
 module, or do not keep it. An unmaintained registry produces confident
@@ -210,18 +251,22 @@ avoided the requirement was wrong.
 §17 accuracy assertions, which read expected text from the exported
 constants rather than restating it. Tier 1 is satisfied.
 
-**Tier 4 is not.** The pending-escalation reply has never been sent over
-real WhatsApp. Tier 4 is not covered by automated tests by definition, so
-the new path carries automated proof only.
+**Tier 4 — satisfied for this path, on 2026-09-10.** The verification
+requirement recorded here was: one live run against the Meta test number —
+escalate, send an ordinary question, confirm the pending reply arrives and the
+ordinary reply does not, resolve in `/admin`, confirm the ordinary reply
+resumes. That run was performed and passed; it is §17 rows 11 and 12, recorded
+in the checkpoint table above.
 
-**Verification requirement before this behaviour is trusted in
-production:** one live run against the Meta test number — escalate, send an
-ordinary question, confirm the pending reply arrives and the ordinary reply
-does not, resolve in `/admin`, confirm the ordinary reply resumes.
+**Scope of that satisfaction, stated narrowly on purpose.** It covers exactly
+one path: escalation hold → staff resolution → normal reply resumption. It
+says nothing about any other tier-4 behaviour, and it does not generalise to
+rows 13–14, whose paths were never exercised live.
 
-**Open question for the owner:** §17's acceptance table has ten rows and
-does not describe this behaviour. Either it gains a row, or §17 stops being
-the complete acceptance specification. Not decided here.
+**Resolved — the open question about §17's shape.** This section previously
+asked whether §17's ten-row table should gain a row or stop being the complete
+acceptance specification. It gained rows: §17 has carried rows 11–14 since
+2026-09-08, and remains the complete acceptance specification.
 
 ## Contradictory escalation state (2026-09-08)
 

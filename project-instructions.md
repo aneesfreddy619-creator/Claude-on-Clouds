@@ -35,12 +35,20 @@ Where things live:
 
 **V0 is complete (2026-09-05).**
 
-Backend green: 75 automated tests passing, build clean, deployed on Railway from main,
+Backend green: 87 automated tests passing, build clean, deployed on Railway from main,
 /health and /admin working, all seven env vars set.
-§17 acceptance tests: 14 of 14 pass — rows 1–9 proven live end-to-end against the Meta test number,
-row 10 (duplicate webhook) proven against a real database in webhook.persistence.test.ts and not
-live-triggerable, since Meta will not redeliver a wamid on demand. Rows 11-14 (open-escalation
-behaviour, added 2026-09-08) are proven against a real database only and have NO live proof yet.
+
+§17 acceptance tests: 14 of 14 pass, **at differing strengths**. Read the strength, not the count.
+
+| Rows | Strength | Evidence |
+|---|---|---|
+| 1–9 | **Live-proven** (2026-09-05) | End-to-end against the Meta test number, each verified in Railway logs |
+| 10 | **Database-proven only** | `webhook.persistence.test.ts` against a real database. Not live-triggerable: Meta will not redeliver a wamid on demand |
+| 11–12 | **Live-proven** (2026-09-10) | Live against the Meta test number, once commit a18fb1b made staff resolution reachable in a browser. Detail in v0-implementation-decisions.md |
+| 13–14 | **Database-proven only — HELD, no live proof** | Both describe states the product is built never to produce: row 13 needs the escalation-state read to fail, row 14 needs `human_escalation` with no open escalation row. Producing either live requires inducing a source failure or editing Supabase by hand. Neither is approved, so neither is scheduled |
+
+**Rows 13–14 have not passed live and must not be recorded as if they had.**
+
 §19 definition of done: satisfied — a real WhatsApp message produced an approved reply observed
 in WhatsApp, with Meta status webhooks confirming sent then read.
 
@@ -57,11 +65,30 @@ Full account in v0-implementation-decisions.md.
   because the temporary developer token had expired. Refreshing WHATSAPP_ACCESS_TOKEN in Railway
   fixed it. Temporary tokens expire on a fixed cycle, so this recurs. A permanent System User token
   is the durable fix; not yet applied.
-- **The test number is opted out.** The single approved test recipient sent STOP during the live run,
-  so its lead row carries opted_out = true and receives no further automated replies. Since
-  2026-09-07 staff can clear it from the admin page ("Clear opt-out", shown only on opted-out rows).
+- **Test lead 919560640859 — current state (2026-09-10):** `opted_out = false`, status
+  `acknowledged`, no open escalations. It can receive automated replies again.
+  *History, not current state:* it sent STOP during the 2026-09-05 run and carried
+  `opted_out = true`; it was later held in `human_escalation` with five open escalations. The
+  opt-out was cleared and all five escalations resolved on 2026-09-10 through the admin page, to
+  run §17 rows 11–12. Clearing an opt-out stays a deliberate staff action — nothing in the message
+  pipeline performs it.
 - **Supabase pooler.** DATABASE_URL must stay on the IPv4 session pooler. See
   v0-implementation-decisions.md — do not revert to the direct host.
+
+## What is held — nothing below is in progress
+
+A fresh reader should be able to tell state without reading a chat log.
+
+| Item | State |
+|---|---|
+| V0 backend, admin, deployment | **Complete**, live-proven (§19 satisfied 2026-09-05) |
+| §17 rows 1–9, 11–12 | **Live-proven** |
+| §17 row 10 | **Database-proven only** — not live-triggerable |
+| §17 rows 13–14 | **HELD, not live-proven.** Live proof needs an induced source failure or a manual Supabase edit; neither approved, so neither scheduled |
+| Two test-harness findings (unterminating persistence run; `clearLeadOptOut` false-pass) | **Recorded only.** Not fixed, no fix approved — see v0-implementation-decisions.md |
+| Advisory Agent Shell v4 | **Design draft complete and committed.** NOT CANON, NOT PROVEN, NOT DEPLOYED. No implementation, no refactor toward it |
+| Airdesk material | **Reference and stress-test only.** Not resumed, not authoritative for anything here |
+| Further live WhatsApp testing | **Not scheduled.** No further test-lead mutation without explicit approval |
 
 ## Scope lock
 
